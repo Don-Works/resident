@@ -98,6 +98,10 @@ enum MenuBuilder {
             let ago = Format.duration(max(Date().timeIntervalSince1970 - at, 0))
             let count = model.inFlight > 1 ? " · \(model.inFlight) in flight" : ""
             submenu.addItem(caption("last prediction \(Format.tokens(rate)) · \(ago) ago\(count)"))
+            if let prompt = model.promptTokens, let first = model.timeToFirstToken {
+                submenu.addItem(caption("its \(Format.contextLength(prompt)) prompt took "
+                    + "\(Format.duration(first)) before the first token"))
+            }
         }
         if let quantisation = model.quantisation {
             var detail = "\(quantisation)"

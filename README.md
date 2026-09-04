@@ -129,14 +129,22 @@ Resident never unloads anything on its own, and never stops a process it does no
 
 ## Live throughput
 
-The `tok/s` figure next to a model is a measurement, and it is the runtime's own — the
-number LM Studio or llama.cpp reports for a prediction it completed. Resident does not
-time requests itself, so it cannot be fooled by prompt processing or by a request that
-never reached the GPU.
+The `tok/s` figure next to a model is a measurement from the runtime's own statistics
+for a prediction it completed. Resident does not time requests itself.
+
+It is the *generation* rate: tokens produced over the time spent producing them. LM
+Studio's headline `tokensPerSecond` divides by the whole request instead, prompt
+processing included, and an agent working over an 85K-token conversation spends half a
+minute on the prompt before the first token — which turns a 19 tok/s decode into a
+reported 11. Resident uses the generation time, and shows the prompt size and
+time-to-first-token in the model's submenu so the two costs stay separate.
+
+A rate is per request, not per model. Two requests decoding at once share the GPU and
+each reports roughly half; a single request gets the whole bus.
 
 | Runtime | Source | What it means |
 |---|---|---|
-| LM Studio | `lms log stream --source model --stats` | rate of the last completed prediction on that model |
+| LM Studio | `lms log stream --source model --stats` | generation rate of the last completed prediction on that model, prompt processing excluded |
 | llama.cpp | `/metrics` → `llamacpp:tokens_predicted_total`, as a rate | average over the last sample interval |
 | Ollama | — | not reported by Ollama's API |
 | process scan | — | no API to ask |
@@ -275,6 +283,11 @@ osascript -e 'tell application "System Events" to tell process "Resident" \
 
 **A model shows no decode ceiling.** Either it is an embedding model, which has no
 decode loop, or its size came from a process scan and would be a fiction.
+
+**The rate looks low.** Check the submenu: a long prompt makes a request slow without
+the decode being slow, and a second request in flight halves what each one gets. Compare
+the rate with the `≤` ceiling on the same row — a dense model at 80-100% of it is running
+as fast as the memory bus allows, and only a smaller quantisation changes that.
 
 **A model shows no `tok/s`.** Nothing has completed a prediction on it since Resident
 started, or the runtime does not report one — see [Live throughput](#live-throughput).

@@ -33,12 +33,17 @@ struct LoadedModel: Codable, Sendable, Equatable {
     /// Set when the size is inferred from process memory rather than reported by the
     /// runtime, because that number includes the KV cache and runtime overhead.
     var sizeIsApproximate: Bool = false
-    /// Decode rate the runtime itself reported for the most recent prediction it
-    /// finished on this model. A measurement, unlike `decodeCeiling` — nil where the
-    /// runtime offers none.
+    /// Decode rate of the most recent prediction the runtime finished on this model,
+    /// from the runtime's own statistics: generated tokens over generation time, with
+    /// prompt processing excluded. A measurement, unlike `decodeCeiling` — nil where
+    /// the runtime offers none.
     var tokensPerSecond: Double?
     /// Unix time of that measurement.
     var measuredAt: Double?
+    /// The prompt that prediction processed, and how long it took before the first
+    /// token. A long context makes a request feel slow without the decode being slow.
+    var promptTokens: Int?
+    var timeToFirstToken: Double?
     /// Predictions the runtime is serving on this model right now.
     var inFlight: Int = 0
 
