@@ -32,15 +32,23 @@ final class LMStudio: ModelRuntime {
         if live { stream.ensureRunning() }
         reconcile(stream.snapshot())
         let activity = stream.snapshot()
-        // The stream sees every prediction start and finish; `lms ps` is polled once a
-        // minute. While the stream is open it is the authority on what is generating.
         let streaming = stream.isConnected
+        // While the stream is open it is the authority on what is generating: it sees
+        // every start and finish, and `lms ps` is polled once a minute. The exception
+        // is a prediction already running when the stream connected — no start event,
+        // and only `lms ps` knows. Believe it when it was asked after the last finish
+        // the stream saw on that model.
+        let polled = enrichment.refreshedAt?.timeIntervalSince1970 ?? 0
 
         return loaded.compactMap { entry in
             guard let id = entry["id"] as? String else { return nil }
             let detail = enrichment.detail(for: id)
-            let inFlight = activity.inFlight(id)
             let reading = activity.latest[id]
+            var inFlight = activity.inFlight(id)
+            if inFlight == 0, detail?.activity == .generating,
+               polled > (activity.finished[id] ?? 0) {
+                inFlight = 1
+            }
 
             return LoadedModel(
                 runtime: name,
@@ -58,6 +66,8 @@ final class LMStudio: ModelRuntime {
                 timeToLive: detail?.timeToLive,
                 tokensPerSecond: reading?.tokensPerSecond,
                 measuredAt: reading?.at,
+                promptTokens: reading?.promptTokens,
+                timeToFirstToken: reading?.timeToFirstToken,
                 inFlight: inFlight
             )
         }
@@ -212,11 +222,12 @@ private final class Enrichment {
 
     /// Fetches now and waits. Used by one-shot CLI commands asked for exact state.
     func refreshBlocking() {
+        let asked = Date()
         guard let parsed = fetch() else { return }
         lock.lock()
         details = parsed
         lastRefresh = Date()
-        lastSuccess = lastRefresh
+        lastSuccess = asked
         loadedFromDisk = true
         lock.unlock()
         saveCache(parsed)
@@ -235,9 +246,12 @@ private final class Enrichment {
         lock.unlock()
 
         DispatchQueue.global(qos: .utility).async { [self] in
+            // The answer describes the moment it was asked, not the moment the slow
+            // call returned; that is the time a caller compares against.
+            let asked = Date()
             let parsed = fetch()
             lock.lock()
-            if let parsed { details = parsed; loadedFromDisk = true; lastSuccess = Date() }
+            if let parsed { details = parsed; loadedFromDisk = true; lastSuccess = asked }
             lastRefresh = Date()
             refreshing = false
             lock.unlock()

@@ -15,12 +15,35 @@ final class LMStudioStream {
     struct Reading: Codable {
         var tokensPerSecond: Double
         var at: Double
+        var promptTokens: Int?
+        var timeToFirstToken: Double?
+
+        /// LM Studio's `tokensPerSecond` divides by the whole request, prompt processing
+        /// included — an 85K-token context takes half a minute before the first token
+        /// and drags a 19 tok/s decode down to 11. Generation time alone is the rate
+        /// that says how fast the model runs; the prompt cost is kept alongside.
+        init?(stats: [String: Any], at: Double) {
+            let predicted = (stats["predictedTokensCount"] as? Double) ?? 0
+            let total = (stats["totalTimeSec"] as? Double) ?? 0
+            let first = (stats["timeToFirstTokenSec"] as? Double) ?? 0
+            let reported = (stats["tokensPerSecond"] as? Double) ?? 0
+            let generating = total - first
+            let decode = predicted > 1 && generating > 0.05 ? (predicted - 1) / generating : reported
+            guard decode > 0 else { return nil }
+            tokensPerSecond = decode
+            self.at = at
+            promptTokens = (stats["promptTokensCount"] as? Double).map(Int.init)
+            timeToFirstToken = first > 0 ? first : nil
+        }
     }
 
     struct State: Codable {
         /// Start times of predictions not yet finished, per model identifier.
         var started: [String: [Double]] = [:]
         var latest: [String: Reading] = [:]
+        /// When the stream last saw a prediction end on each model. A slower source
+        /// that says "generating" is only believed if it was asked after this.
+        var finished: [String: Double] = [:]
         var ts: Double = 0
 
         func inFlight(_ id: String) -> Int { started[id]?.count ?? 0 }
@@ -172,21 +195,22 @@ final class LMStudioStream {
         case "llm.prediction.input":
             state.started[id, default: []].append(at)
         case "llm.prediction.output":
-            finish(id)
-            let stats = event["stats"] as? [String: Any]
-            if let rate = stats?["tokensPerSecond"] as? Double, rate > 0 {
-                state.latest[id] = Reading(tokensPerSecond: rate, at: at)
+            finish(id, at: at)
+            if let stats = event["stats"] as? [String: Any],
+               let reading = Reading(stats: stats, at: at) {
+                state.latest[id] = reading
             }
         default:
             // Any other end-of-prediction event — cancelled, failed — still ends it.
             guard type.hasPrefix("llm.prediction.") else { return }
-            finish(id)
+            finish(id, at: at)
         }
         state.ts = Date().timeIntervalSince1970
         saveCache()
     }
 
-    private func finish(_ id: String) {
+    private func finish(_ id: String, at: Double) {
+        state.finished[id] = at
         guard var starts = state.started[id], !starts.isEmpty else { return }
         starts.removeFirst()
         state.started[id] = starts.isEmpty ? nil : starts
