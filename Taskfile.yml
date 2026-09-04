@@ -1,0 +1,123 @@
+version: '3'
+
+vars:
+  APP: Resident
+  CLI: resident
+  BUNDLE: Resident.app
+  BUILDDIR: .build/release
+  DIST: dist
+  PREFIX: '{{.PREFIX | default "/opt/homebrew"}}'
+  AGENT: co.revitt.resident
+  AGENTDIR: '{{.HOME}}/Library/LaunchAgents'
+  VERSION:
+    sh: sed -n 's/.*static let version = "\(.*\)".*/\1/p' Sources/Resident/Version.swift
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list-all
+    silent: true
+
+  preflight:
+    desc: Check that a Swift toolchain is present
+    silent: true
+    cmds:
+      - |
+        if ! command -v swift &>/dev/null; then
+          echo "ERROR: no Swift toolchain found."
+          echo "Install Xcode, or the Command Line Tools: xcode-select --install"
+          exit 1
+        fi
+        echo "swift: $(swift --version 2>&1 | head -1)"
+
+  build:
+    desc: Build the release binary for this machine
+    deps: [preflight]
+    cmds:
+      - swift build -c release
+
+  app:
+    desc: Assemble Resident.app
+    deps: [build]
+    cmds:
+      - rm -rf {{.DIST}}/{{.BUNDLE}}
+      - mkdir -p {{.DIST}}/{{.BUNDLE}}/Contents/MacOS {{.DIST}}/{{.BUNDLE}}/Contents/Resources
+      - cp Resources/Info.plist {{.DIST}}/{{.BUNDLE}}/Contents/Info.plist
+      - cp {{.BUILDDIR}}/{{.APP}} {{.DIST}}/{{.BUNDLE}}/Contents/MacOS/{{.APP}}
+      - codesign --force --sign - {{.DIST}}/{{.BUNDLE}} 2>/dev/null || true
+      - echo "Built {{.DIST}}/{{.BUNDLE}}"
+
+  install-cli:
+    desc: Install the resident CLI onto your PATH
+    deps: [build]
+    cmds:
+      - mkdir -p {{.PREFIX}}/bin
+      - cp {{.BUILDDIR}}/{{.APP}} {{.PREFIX}}/bin/{{.CLI}}
+      - echo "Installed {{.PREFIX}}/bin/{{.CLI}}"
+
+  install:
+    desc: Install the app into /Applications and the CLI onto your PATH
+    deps: [app, install-cli]
+    cmds:
+      - rm -rf /Applications/{{.BUNDLE}}
+      - cp -R {{.DIST}}/{{.BUNDLE}} /Applications/
+      - echo "Installed /Applications/{{.BUNDLE}}"
+
+  run:
+    desc: Build and run in the menu bar, replacing any running copy
+    deps: [app]
+    cmds:
+      - pkill -x {{.APP}} 2>/dev/null || true
+      - open {{.DIST}}/{{.BUNDLE}}
+
+  autostart:
+    desc: Start Resident at login
+    deps: [install]
+    cmds:
+      - mkdir -p {{.AGENTDIR}}
+      - |
+        cat > {{.AGENTDIR}}/{{.AGENT}}.plist <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key><string>{{.AGENT}}</string>
+            <key>ProgramArguments</key>
+            <array><string>/Applications/{{.BUNDLE}}/Contents/MacOS/{{.APP}}</string></array>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><true/>
+        </dict>
+        </plist>
+        PLIST
+      - launchctl bootout gui/$(id -u)/{{.AGENT}} 2>/dev/null || true
+      - launchctl bootstrap gui/$(id -u) {{.AGENTDIR}}/{{.AGENT}}.plist
+      - echo "Resident will start at login"
+
+  no-autostart:
+    desc: Stop Resident starting at login
+    cmds:
+      - launchctl bootout gui/$(id -u)/{{.AGENT}} 2>/dev/null || true
+      - rm -f {{.AGENTDIR}}/{{.AGENT}}.plist
+      - echo "Login item removed"
+
+  uninstall:
+    desc: Remove everything Resident installed
+    cmds:
+      - task: no-autostart
+      - pkill -x {{.APP}} 2>/dev/null || true
+      - rm -rf /Applications/{{.BUNDLE}}
+      - rm -f {{.PREFIX}}/bin/{{.CLI}}
+      - rm -rf "{{.HOME}}/Library/Caches/co.revitt.resident"
+      - echo "Removed.""
+
+  clean:
+    desc: Remove build products
+    cmds:
+      - rm -rf .build {{.DIST}}
+
+  status:
+    desc: Print a one-shot report
+    deps: [build]
+    cmds:
+      - ./{{.BUILDDIR}}/{{.APP}} status --detail

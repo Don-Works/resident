@@ -1,0 +1,14 @@
+Resident
+Copyright (C) 2026 Don Works
+
+Resident is licensed under the GNU Affero General Public License v3.0 or later.
+See LICENSE for the full license text.
+
+Resident is a macOS menu bar utility. It links only against system frameworks
+shipped with macOS (AppKit, Foundation, Metal, IOKit) and the platform's own
+libproc/sysctl interfaces. It vendors no third-party source and has no package
+dependencies. Where the `lms` command-line tool from LM Studio is installed,
+Resident runs it to read model activity; it is not bundled.
+
+Sister project to Handler (https://github.com/Don-Works/handler), which watches
+the resource ceilings that take the whole machine down.
