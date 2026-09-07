@@ -4,7 +4,7 @@ extension CLI {
     // MARK: - Unload
 
     static func unload(identifier: String?, idleOnly: Bool) {
-        let runtimes: [ModelRuntime] = [LMStudio(), Ollama(), LlamaServer(), UnmanagedRuntime()]
+        let runtimes: [ModelRuntime] = [LMStudio(), Ollama(), LlamaServer(), UnmanagedRuntime(), RemoteVLLM()]
         let present = runtimes.filter { $0.isPresent() }
         let loaded = present.flatMap { runtime in runtime.loadedModels().map { (runtime, $0) } }
 

@@ -35,6 +35,7 @@ take the whole machine down. Resident watches the ones that make local inference
 - [Why there is no bandwidth gauge](#why-there-is-no-bandwidth-gauge)
 - [What it measures](#what-it-measures)
 - [Supported runtimes](#supported-runtimes)
+- [Remote boxes](#remote-boxes)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Licence](#licence)
@@ -257,7 +258,8 @@ almost all of it waiting on model-runtime HTTP.
 | LM Studio | `/api/v0/models` | on-disk model index | `lms log stream`, else `lms ps` cached | `lms log stream` | `lms unload` |
 | Ollama | `/api/ps` | `size_vram` | — | — | `keep_alive: 0` |
 | llama.cpp | `/props` on 8080/8000/8081 | GGUF file size | `/slots` | `/metrics` | no — stop the server |
-| MLX, vLLM, others | process scan | resident process memory | — | — | no |
+| vLLM on a remote box | `remotes.json` → `/metrics` | not this machine's memory | `num_requests_running` | token counters, as a rate | no — stop the box |
+| MLX, vLLM (local), others | process scan | resident process memory | — | — | no |
 
 Anything found by process scan is marked with `~`, because resident process memory
 includes the KV cache, the framework and the interpreter — not just weights.
@@ -268,6 +270,114 @@ loop. So the loop uses the REST endpoint (about 8 ms) plus LM Studio's own on-di
 index for exact sizes, and the slow call runs in the background into a cache that every
 Resident process shares. Activity and throughput come from the log stream described
 under [Live throughput](#live-throughput) when it is open, and from that cache otherwise.
+
+---
+
+## Remote boxes
+
+The same menu can carry a model that is not on this machine at all — a GPU rented by
+the hour, a box in the cupboard — as long as it is served by **vLLM**. Local and remote
+sit in the same menu, marked apart: a remote row starts with `☁`, and the menu bar
+title reads `▶ ☁ qwen3.8-27b 71 tok/s` while a remote is the model doing the work.
+
+```
+Remote boxes
+▶  ☁ vast.ai · H100 SXM    qwen3.8-27b    71 tok/s    2 req  kv 66%  gpu 100%
+```
+
+Nothing about a remote touches the memory arithmetic. Its weights are in someone else's
+VRAM, so it is excluded from the weights gauge, the headroom, the paging verdict and the
+decode ceiling, which is a fact about *this* machine's bus. It gets its own line in the
+verdict instead.
+
+### The connector
+
+Resident reads `~/.config/resident/remotes.json`, a list of boxes. The smallest entry
+is a name and the OpenAI-compatible base URL:
+
+```json
+[
+  { "name": "lab", "base_url": "http://10.0.0.5:8000/v1", "provider": "homelab" }
+]
+```
+
+The full shape, which is what a provisioner writes:
+
+```json
+[
+  {
+    "name": "vast-box",
+    "base_url": "http://203.0.113.10:20066/v1",
+    "ctl_url": "http://203.0.113.10:19983",
+    "token": "…",
+    "gpu": "H100 SXM",
+    "context": 262144,
+    "ssh": "ssh2.vast.ai:11354"
+  }
+]
+```
+
+| Key | Used for |
+|---|---|
+| `base_url` | Where vLLM answers. `/metrics` is derived from it (`/v1` → `/metrics`) unless `metrics_url` says otherwise. |
+| `ctl_url` + `token` | Optional sidecar that answers `GET /gpu` — see below. Without it there is no GPU utilisation, because vLLM does not export one. |
+| `provider` | Who owns the metal. When absent it is **inferred**: the registrable domain of the first real hostname in the entry (`ssh2.vast.ai` → `vast.ai`). An IP address says nothing, and there is no vendor list in the code. |
+| `gpu`, `context` | Labels for the row. The sidecar's card name fills in `gpu` when the entry has none. |
+
+The file is read on every sample, so a provisioner can add a box when it comes up and
+remove it when the box is destroyed. Everything shown for a remote is one of the box's
+own readings:
+
+| Figure | Source |
+|---|---|
+| tok/s | `vllm:generation_tokens_total`, as a rate between two samples |
+| prefill | `vllm:prompt_tokens_total`, the same way |
+| req | `vllm:num_requests_running` (+ `num_requests_waiting` when there is a queue) |
+| kv | `vllm:kv_cache_usage_perc` |
+| gpu | the sidecar's `utilization`, and VRAM used / total in the row's submenu |
+
+vLLM serves `/metrics` without authentication even when the API needs a key, so the
+token is only ever sent to the sidecar.
+
+### The sidecar
+
+Any HTTP endpoint that answers `GET <ctl_url>/gpu` with a bearer token and this JSON
+turns on the GPU column:
+
+```json
+{ "name": "NVIDIA H100 80GB HBM3", "utilization": 100.0,
+  "memory_used_mib": 74809, "memory_total_mib": 81559 }
+```
+
+That is one `nvidia-smi --query-gpu` call behind a 20-line HTTP server. The
+[vast-box](https://github.com/Don-Works/mcplexer) lane controller does exactly this and
+registers the box in `remotes.json` on `up` and removes it on `down`; any other
+provisioner can do the same with a JSON write.
+
+### The status item names its source
+
+Whichever model is producing the most tokens takes the menu bar title, and the title says
+where it runs: `▶ Qwen3.8 27B 14 tok/s · mac gpu 54%` for a local model, `▶ ☁ vast.ai
+qwen3.8-27b 39 tok/s ×2 · gpu 100%` for a box, where the rate is each request's share of
+the box's total and `gpu` is the box's card, never this Mac's. Idle, both are listed with
+their own label. The tooltip spells out what every figure is and where it was read.
+
+### The thrash alert
+
+A box whose in-flight contexts exceed its KV cache evicts a running request to serve
+another and recomputes it later, and every turn then waits on a 100K-token prefill. vLLM
+shows this as its preemption counter climbing while requests wait for capacity (or the
+cache sits above 85 percent). Resident calls that thrashing: the verdict goes critical,
+the status icon becomes a dark red filled triangle with "thrashing" in words beside it,
+and one macOS notification fires per episode per box. The fix is in the warning line:
+compact or close sessions, or switch to a lane with a bigger cache.
+
+### Two things to know
+
+- Sampling a remote costs one `/metrics` fetch (about 50 KB) and one `/gpu` fetch every
+  five seconds, with a 2.5-second timeout so a box that has gone away costs no more.
+- The app bundle carries an App Transport Security exception for cleartext HTTP, because
+  rented boxes answer over plain `http://` on a public address. The CLI never needed it.
 
 ---
 

@@ -99,7 +99,12 @@ struct Sample: Codable, Sendable {
     /// The model doing the work: one with a prediction in flight, else the one whose
     /// last prediction finished within the hold.
     var working: LoadedModel? {
-        if let busy = models.first(where: { $0.activity == .generating }) { return busy }
+        // Several can be generating at once — a local model and a rented box, say. The
+        // headline goes to whichever is producing the most tokens right now.
+        let busy = models.filter { $0.activity == .generating }
+        if let fastest = busy.max(by: { ($0.tokensPerSecond ?? 0) < ($1.tokensPerSecond ?? 0) }) {
+            return fastest
+        }
         return models
             .filter { model in model.measuredAt.map { ts - $0 <= Self.workingHold } ?? false }
             .max { ($0.measuredAt ?? 0) < ($1.measuredAt ?? 0) }

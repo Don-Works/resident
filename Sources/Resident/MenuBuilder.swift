@@ -60,16 +60,17 @@ enum MenuBuilder {
     static func buildModels(into menu: NSMenu, sample: Sample, target: AnyObject,
                             unload: Selector) {
         menu.addItem(header("Resident models"))
+        let local = sample.models.local
 
-        guard !sample.models.isEmpty else {
-            menu.addItem(caption(sample.runtimesSeen.isEmpty
+        if local.isEmpty {
+            let runtimes = sample.runtimesSeen.filter { $0 != "vllm" }
+            menu.addItem(caption(runtimes.isEmpty
                 ? "        no inference runtime is running"
-                : "        \(sample.runtimesSeen.joined(separator: ", ")) running, nothing loaded"))
-            return
+                : "        \(runtimes.joined(separator: ", ")) running, nothing loaded"))
         }
 
         let peak = Hardware.current.peakBandwidth
-        for model in sample.models {
+        for model in local {
             let ceiling = model.decodeCeiling(peakBandwidth: peak)
                 .map { "≤ " + Format.tokens($0) } ?? ""
             let measured = model.tokensPerSecond.map { Format.tokens($0) } ?? ""
@@ -86,8 +87,77 @@ enum MenuBuilder {
             menu.addItem(item)
         }
 
-        menu.addItem(caption("        ▶ generating · tok/s is the runtime's figure for its "
-            + "last prediction · ≤ is the ceiling set by memory bandwidth"))
+        if !local.isEmpty {
+            menu.addItem(caption("        ▶ generating · tok/s is the runtime's figure for its "
+                + "last prediction · ≤ is the ceiling set by memory bandwidth"))
+        }
+
+        buildRemotes(into: menu, remotes: sample.models.remotes)
+    }
+
+    /// Boxes elsewhere, each on its own row: who owns it, what it is, and the readings
+    /// vLLM and its sidecar report. Nothing here is a ceiling — that is this machine's
+    /// bus, and a remote model is not on it.
+    private static func buildRemotes(into menu: NSMenu, remotes: [LoadedModel]) {
+        guard !remotes.isEmpty else { return }
+        menu.addItem(header("Remote boxes"))
+        for model in remotes {
+            let info = model.remote!
+            let where_ = [info.provider, info.gpu].compactMap { $0 }.joined(separator: " · ")
+            let rate = model.tokensPerSecond.map { Format.tokens($0) } ?? ""
+            let flight = model.inFlight > 0 || info.queued > 0
+                ? "\(model.inFlight)" + (info.queued > 0 ? "+\(info.queued)" : "") + " req" : ""
+            let each = model.inFlight > 1
+                ? model.tokensPerSecond.map { Format.tokens($0 / Double(model.inFlight)) + " ea" } ?? "" : ""
+            let kv = info.kvCacheUsage.map { "kv " + Format.percent($0) } ?? ""
+            let busy = info.gpuUtilisation.map { "gpu " + Format.percent($0) } ?? ""
+            let line = "\(activityMark(model))  ☁ \(Format.pad(where_, 22))"
+                + "\(Format.pad(model.displayName, 20))\(Format.pad(rate, 10, right: true))"
+                + "\(Format.pad(flight, 9, right: true))\(Format.pad(each, 12, right: true))"
+                + "\(Format.pad(kv, 8, right: true))\(Format.pad(busy, 9, right: true))"
+
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            item.attributedTitle = NSAttributedString(
+                string: line,
+                attributes: [.font: model.activity == .generating ? monoBold : mono])
+            item.submenu = remoteSubmenu(for: model)
+            menu.addItem(item)
+        }
+        menu.addItem(caption("        ☁ served elsewhere · tok/s is the box's total, ea is each request's "
+            + "share · req from vLLM's counters · kv is its cache fill · gpu is the sidecar reading"))
+    }
+
+    private static func remoteSubmenu(for model: LoadedModel) -> NSMenu {
+        let info = model.remote!
+        let submenu = NSMenu()
+        submenu.addItem(caption("\(model.runtime) · \(model.identifier)"))
+        submenu.addItem(caption("\(info.name) on \(info.provider)"
+            + (info.gpu.map { " · \($0)" } ?? "") + " · \(info.host)"))
+        if let rate = model.tokensPerSecond, let at = model.measuredAt {
+            let ago = Format.duration(max(Date().timeIntervalSince1970 - at, 0))
+            var line = "decode \(Format.tokens(rate)) · \(ago) ago"
+            if let prefill = info.promptTokensPerSecond { line += " · prefill \(Format.tokens(prefill))" }
+            submenu.addItem(caption(line))
+        }
+        var load = "\(model.inFlight) running · \(info.queued) queued"
+        if model.inFlight > 1, let rate = model.tokensPerSecond {
+            load += " · \(Format.tokens(rate / Double(model.inFlight))) each"
+        }
+        if let kv = info.kvCacheUsage { load += " · KV cache \(Format.percent(kv)) full" }
+        submenu.addItem(caption(load))
+        if let busy = info.gpuUtilisation {
+            var gpu = "GPU \(Format.percent(busy)) busy"
+            if let used = info.gpuMemoryUsed, let total = info.gpuMemoryTotal {
+                gpu += " · \(Format.bytes(used)) of \(Format.bytes(total)) VRAM"
+            }
+            submenu.addItem(caption(gpu))
+        }
+        if let context = model.contextLength {
+            submenu.addItem(caption("context \(Format.contextLength(context))"))
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(caption("stopped by whatever rented it, not from here"))
+        return submenu
     }
 
     private static func submenu(for model: LoadedModel, target: AnyObject,

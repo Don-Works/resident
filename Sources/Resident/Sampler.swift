@@ -18,7 +18,7 @@ final class Sampler {
     /// modes ask for it.
     init(runtimes: [ModelRuntime]? = nil, detailed: Bool = false, live: Bool = false) {
         self.runtimes = runtimes
-            ?? [LMStudio(live: live), Ollama(), LlamaServer(), UnmanagedRuntime()]
+            ?? [LMStudio(live: live), Ollama(), LlamaServer(), UnmanagedRuntime(), RemoteVLLM()]
         self.detailed = detailed
     }
 
@@ -50,7 +50,7 @@ final class Sampler {
 
         return Sample(
             ts: Date().timeIntervalSince1970,
-            gauges: gauges(models: models, memory: snapshot, gpu: gpu),
+            gauges: gauges(models: models.local, memory: snapshot, gpu: gpu),
             models: models.ranked,
             memory: snapshot,
             gpuUtilisation: gpu?.deviceUtilisation ?? 0,

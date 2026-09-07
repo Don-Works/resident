@@ -9,6 +9,11 @@ let package = Package(
             name: "Resident",
             path: "Sources/Resident",
             linkerSettings: [.linkedFramework("Metal"), .linkedFramework("IOKit")]
+        ),
+        .testTarget(
+            name: "ResidentTests",
+            dependencies: ["Resident"],
+            path: "Tests/ResidentTests"
         )
     ]
 )

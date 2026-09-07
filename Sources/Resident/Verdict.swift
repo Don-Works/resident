@@ -21,11 +21,13 @@ struct Verdict {
     /// Memory held by models that are not generating.
     var reclaimable: Int = 0
     var reclaimCandidates: [LoadedModel] = []
+    /// A remote box is evicting running requests to fit contexts that exceed its cache.
+    var thrashing: [LoadedModel] = []
 
     static func evaluate(sample: Sample, hardware: Hardware = .current,
                          thresholds: Thresholds = .default) -> Verdict {
         var verdict = Verdict()
-        let models = sample.models
+        let models = sample.models.local
         let resident = models.totalBytes
 
         // The Metal ceiling is not the only limit. If the machine has already handed
@@ -37,6 +39,7 @@ struct Verdict {
         verdict.headroomLimitedByMemory = free < gpuHeadroom
         verdict.reclaimCandidates = models.idleModels
         verdict.reclaimable = verdict.reclaimCandidates.totalBytes
+        verdict.thrashing = sample.models.remotes.filter { $0.remote?.thrashing == true }
 
         verdict.summary = summary(sample: sample, hardware: hardware,
                                   headroom: verdict.headroom,
@@ -53,7 +56,7 @@ struct Verdict {
     private static func summary(sample: Sample, hardware: Hardware, headroom: Int,
                                 limitedByMemory: Bool) -> [String] {
         var lines: [String] = []
-        let models = sample.models
+        let models = sample.models.local
 
         if models.isEmpty {
             lines.append("No models resident. \(Format.bytes(headroom)) available to load into.")
@@ -89,13 +92,46 @@ struct Verdict {
             lines.append(measured)
         }
 
+        lines.append(contentsOf: remoteLines(sample.models.remotes))
         return lines
+    }
+
+    /// One line per remote box, every figure the box's own: decode and prefill rates
+    /// from vLLM's counters, queue depth and KV fill from the same page, and GPU busy
+    /// time from the sidecar where there is one.
+    static func remoteLines(_ remotes: [LoadedModel]) -> [String] {
+        remotes.map { model in
+            let info = model.remote!
+            var head = "☁ \(model.displayName) on \(info.provider)"
+            if let gpu = info.gpu { head += " (\(gpu))" }
+            if let rate = model.tokensPerSecond {
+                head += model.activity == .generating
+                    ? " is decoding at \(Format.tokens(rate))"
+                    : " last decoded at \(Format.tokens(rate))"
+            } else {
+                head += model.activity == .generating ? " is generating" : " is serving, idle"
+            }
+            var facts: [String] = []
+            if model.inFlight > 0 || info.queued > 0 {
+                facts.append("\(model.inFlight) running" + (info.queued > 0 ? ", \(info.queued) queued" : ""))
+            }
+            // The counter rate is the box's total. Several agents share it, so say what
+            // each one is getting.
+            if model.inFlight > 1, let rate = model.tokensPerSecond {
+                facts.append("\(Format.tokens(rate / Double(model.inFlight))) each")
+            }
+            if let prefill = info.promptTokensPerSecond { facts.append("prefill \(Format.tokens(prefill))") }
+            if let kv = info.kvCacheUsage { facts.append("KV cache \(Format.percent(kv)) full") }
+            if let busy = info.gpuUtilisation { facts.append("GPU \(Format.percent(busy)) busy") }
+            return facts.isEmpty ? head : head + " — " + facts.joined(separator: ", ")
+        }
     }
 
     /// What the working model actually managed, set against its bus ceiling. The rate
     /// is the runtime's own figure for the prediction it last completed.
     private static func throughput(sample: Sample, hardware: Hardware) -> String? {
-        guard let model = sample.working, let rate = model.tokensPerSecond else { return nil }
+        guard let model = sample.working, !model.isRemote,
+              let rate = model.tokensPerSecond else { return nil }
         let verb = model.activity == .generating ? "is decoding" : "last decoded"
         let head = "\(model.displayName) \(verb) at \(Format.tokens(rate))"
 
@@ -118,7 +154,7 @@ struct Verdict {
     private static func warnings(sample: Sample, hardware: Hardware, thresholds: Thresholds,
                                  verdict: Verdict) -> [String] {
         var result: [String] = []
-        let models = sample.models
+        let models = sample.models.local
 
         // The level of swap is not a fault; macOS never shrinks it eagerly, so it sits
         // high long after the pressure that caused it. Only the rate means anything.
@@ -160,6 +196,15 @@ struct Verdict {
                 + "cache that reserves grows with the window, whether or not you use it")
         }
 
+        for model in verdict.thrashing {
+            let info = model.remote!
+            result.append("\(info.name) on \(info.provider) is thrashing: \(info.waitingForCapacity) "
+                + "request(s) waiting for cache, \(info.preemptions ?? 0) preemptions so far, KV cache "
+                + "\(Format.percent(info.kvCacheUsage ?? 0)) full — the contexts in flight exceed its "
+                + "cache, so it evicts one to serve another and recomputes it later. Compact or close "
+                + "sessions, or switch to a lane with a bigger cache")
+        }
+
         if let model = models.first(where: { $0.sizeBytes > hardware.maxBufferLength }) {
             result.append("\(model.displayName) is larger than the largest single Metal "
                 + "allocation (\(Format.bytes(hardware.maxBufferLength))) and must be split")
@@ -169,8 +214,16 @@ struct Verdict {
 
     private static func headline(sample: Sample, hardware: Hardware, thresholds: Thresholds,
                                  verdict: Verdict) -> (Level, String) {
-        let models = sample.models
+        let models = sample.models.local
+        if let box = verdict.thrashing.first?.remote {
+            return (.critical, "\(box.name) is thrashing — too much context for its cache")
+        }
         guard !models.isEmpty else {
+            let remotes = sample.models.remotes
+            if let first = remotes.first?.remote {
+                let boxes = remotes.count == 1 ? "a box on \(first.provider)" : "\(remotes.count) remote boxes"
+                return (.ok, "Nothing loaded locally — \(boxes) serving")
+            }
             return (.ok, sample.runtimesSeen.isEmpty
                 ? "No inference runtime running"
                 : "Nothing loaded — \(Format.bytes(verdict.headroom)) free to load into")

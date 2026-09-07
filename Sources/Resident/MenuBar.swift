@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 
 /// The menu bar presence: a status item carrying the two numbers worth glancing at, and
 /// a menu that explains what the models are costing you.
@@ -12,6 +13,8 @@ final class MenuBarController: NSObject {
     private var sample: Sample?
     private var verdict = Verdict()
     private var sampling = false
+    /// Boxes already alerted about, so an episode fires one notification, not one per sample.
+    var alertedThrash: Set<String> = []
 
     var interval: TimeInterval = 5
 
@@ -26,6 +29,7 @@ final class MenuBarController: NSObject {
         statusItem.button?.imagePosition = .imageLeading
         // Remembers where you drag it, so it stays put across restarts.
         statusItem.autosaveName = "co.revitt.resident.status"
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         refresh()
 
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -48,6 +52,7 @@ final class MenuBarController: NSObject {
                 self.sample = sample
                 self.verdict = verdict
                 self.updateStatusItem(sample: sample, verdict: verdict)
+                self.alertIfThrashing(verdict)
                 // Rebuilding under an open highlighted item would move it out from
                 // under the pointer mid-click.
                 if self.menu.highlightedItem == nil {
@@ -60,76 +65,112 @@ final class MenuBarController: NSObject {
 
     // MARK: - Status item
 
-    /// While a model is working, its name and the decode rate its runtime reported;
-    /// otherwise how much memory the models are holding and whether the GPU is busy.
-    /// A glyph alone in a crowded menu bar tells you nothing, and an unlabelled
-    /// percentage next to a byte count reads as a percentage of it — so the GPU figure
-    /// carries its own label.
+    /// The headline names its source. A local model reads `▶ Qwen3.8 27B 14 tok/s · mac gpu 54%`;
+    /// a rented box reads `▶ ☁ vast.ai qwen3.8-27b 39 tok/s ×2 · gpu 100%`, where the rate is
+    /// what each request is getting and the gpu figure is the box's card, never this Mac's.
+    /// Whichever is producing the most tokens takes the headline; idle, both sources are
+    /// listed with their own label so a number is never read against the wrong machine.
     ///
-    /// Nothing here is coloured. The menu bar sits over whatever wallpaper you have and
-    /// switches its own text between black and white to stay legible; a status item that
-    /// paints its own orange opts out of that and becomes unreadable on a light bar.
-    /// Severity is carried by the icon's shape and the text weight instead, which also
-    /// means it survives being read by someone who cannot separate orange from grey.
+    /// Nothing here is coloured, with one exception: a box thrashing its cache draws a
+    /// dark red filled triangle and says "thrashing" in words, so the colour is never the
+    /// only carrier. The menu bar sits over whatever wallpaper you have and switches its
+    /// own text between black and white to stay legible; a status item that paints its
+    /// own orange opts out of that and becomes unreadable on a light bar. Severity is
+    /// otherwise carried by the icon's shape and the text weight.
     private func updateStatusItem(sample: Sample, verdict: Verdict) {
         guard let button = statusItem.button else { return }
-        button.image = Self.icon(for: verdict.level)
-        // Template images are tinted by the system to match the menu bar it is drawn on.
-        button.image?.isTemplate = true
+        button.image = Self.icon(for: verdict.level, thrashing: !verdict.thrashing.isEmpty)
         button.imagePosition = .imageLeading
 
-        let memory = "\(Format.compactBytes(sample.models.totalBytes))"
-            + "  gpu \(Format.percent(sample.gpuUtilisation))"
-        let title: String
+        let local = sample.models.local
+        let mac = "mac " + (local.isEmpty ? "" : Format.compactBytes(local.totalBytes) + " ")
+            + "gpu " + Format.percent(sample.gpuUtilisation)
+        var parts: [String] = []
         var legend: [String] = []
-        if let working = sample.working {
-            title = " \(Self.workingTitle(working))  \(memory)"
-            legend = [
-                (working.activity == .generating ? "▶ generating now" : "finished just now")
-                    + " — \(working.displayName) on \(working.runtime)",
-                working.tokensPerSecond.map {
-                    "\(Format.tokens($0)) — decode rate the runtime reported for its "
-                        + "last completed prediction"
-                } ?? "no rate yet — reported when the first prediction completes",
-            ]
-        } else if sample.models.isEmpty {
-            title = " idle"
-        } else {
-            title = " " + memory
+
+        if let box = verdict.thrashing.first?.remote {
+            parts.append("⚠︎ \(box.name) thrashing")
         }
-        if !sample.models.isEmpty {
-            legend += [
-                "\(Format.compactBytes(sample.models.totalBytes)) — model weights resident",
-                "gpu \(Format.percent(sample.gpuUtilisation)) — GPU device utilisation",
-                "",
-            ]
+
+        if let working = sample.working {
+            parts.append(Self.workingTitle(working))
+            if let remote = working.remote {
+                let gpu = remote.gpuUtilisation.map { "gpu " + Format.percent($0) } ?? "gpu —"
+                parts.append(gpu)
+                legend.append("☁ \(remote.name) on \(remote.provider)"
+                    + (remote.gpu.map { " (\($0))" } ?? "") + " — the model doing the most right now")
+                if let rate = working.tokensPerSecond {
+                    legend.append(working.inFlight > 1
+                        ? "\(Format.tokens(rate)) total across \(working.inFlight) requests, "
+                            + "\(Format.tokens(rate / Double(working.inFlight))) each — vLLM's counters "
+                            + "over the last \(Int(interval))s"
+                        : "\(Format.tokens(rate)) — vLLM's counters over the last \(Int(interval))s")
+                }
+                legend.append("\(gpu) — the box's card, from its sidecar")
+                if !local.isEmpty { legend.append("this mac: \(mac)") }
+            } else {
+                parts.append(mac)
+                legend.append((working.activity == .generating ? "▶ generating now" : "finished just now")
+                    + " — \(working.displayName) on \(working.runtime), this Mac")
+                legend.append(working.tokensPerSecond.map {
+                    "\(Format.tokens($0)) — decode rate the runtime reported for its last completed prediction"
+                } ?? "no rate yet — reported when the first prediction completes")
+                legend.append("\(mac) — weights resident and GPU utilisation on this Mac")
+            }
+        } else if sample.models.isEmpty {
+            parts.append("idle")
+        } else {
+            if !local.isEmpty { parts.append(mac) }
+            for model in sample.models.remotes {
+                let info = model.remote!
+                parts.append("☁ \(info.provider) " + (info.gpuUtilisation.map { "gpu " + Format.percent($0) } ?? "idle"))
+            }
+            legend.append("idle — each figure is labelled with its machine")
         }
 
         button.attributedTitle = NSAttributedString(
-            string: title,
+            string: " " + parts.joined(separator: " · "),
             attributes: [
                 .font: NSFont.monospacedDigitSystemFont(
                     ofSize: 11, weight: verdict.level >= .warn ? .bold : .regular),
                 .foregroundColor: NSColor.labelColor,
             ]
         )
-        button.toolTip = (legend + [verdict.headline] + verdict.summary + verdict.warnings)
+        button.toolTip = (legend + [""] + [verdict.headline] + verdict.summary + verdict.warnings)
             .joined(separator: "\n")
     }
 
-    /// `▶ Qwen3.8 27B 16 tok/s` while a prediction is running; the same without the
-    /// mark for a short hold after it finishes. The rate is the runtime's own figure
-    /// for the last completed prediction, so it lags the generation it describes.
+    /// `▶ ☁ vast.ai qwen3.8-27b 39 tok/s ×2` for a box with two requests on it, where the
+    /// rate is each request's share of the box's total; `▶ Qwen3.8 27B 16 tok/s` locally.
+    /// A remote rate is vLLM's counters over the last sample interval; a local one is the
+    /// runtime's own figure for its last completed prediction, so it lags the generation.
     private static func workingTitle(_ model: LoadedModel) -> String {
-        var parts = [Format.shortName(model.displayName, limit: 18)]
-        if model.activity == .generating { parts.insert("▶", at: 0) }
-        if let rate = model.tokensPerSecond { parts.append(Format.tokens(rate)) }
+        var parts: [String] = []
+        if model.activity == .generating { parts.append("▶") }
+        if let remote = model.remote { parts.append("☁ \(remote.provider)") }
+        parts.append(Format.shortName(model.displayName, limit: 18))
+        if let rate = model.tokensPerSecond {
+            if model.inFlight > 1 {
+                parts.append("\(Format.tokens(rate / Double(model.inFlight))) ×\(model.inFlight)")
+            } else {
+                parts.append(Format.tokens(rate))
+            }
+        }
         return parts.joined(separator: " ")
     }
 
     /// Four distinct silhouettes, so the level is legible in one glance without colour
-    /// and without reading the number.
-    private static func icon(for level: Level) -> NSImage? {
+    /// and without reading the number. Thrash is the one coloured case: a filled triangle
+    /// in dark red, with "thrashing" spelled out beside it.
+    private static func icon(for level: Level, thrashing: Bool) -> NSImage? {
+        if thrashing {
+            let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                                accessibilityDescription: "Resident — a box is thrashing its cache")
+            let config = NSImage.SymbolConfiguration(paletteColors: [NSColor(red: 0.62, green: 0.05, blue: 0.05, alpha: 1)])
+            let tinted = image?.withSymbolConfiguration(config)
+            tinted?.isTemplate = false
+            return tinted
+        }
         let name: String
         let description: String
         switch level {
@@ -142,8 +183,11 @@ final class MenuBarController: NSObject {
         case .critical:
             name = "exclamationmark.octagon.fill"; description = "Resident — out of room"
         }
-        return NSImage(systemSymbolName: name, accessibilityDescription: description)
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: description)
             ?? NSImage(systemSymbolName: "memorychip", accessibilityDescription: description)
+        // Template images are tinted by the system to match the menu bar it is drawn on.
+        image?.isTemplate = true
+        return image
     }
 
     // MARK: - Menu

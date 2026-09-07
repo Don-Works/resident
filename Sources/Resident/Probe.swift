@@ -5,11 +5,13 @@ import Foundation
 /// Every call carries a short timeout. A runtime that has wedged must slow Resident
 /// down by at most that timeout, never hang the menu.
 enum Probe {
-    static func get(_ url: String, timeout: TimeInterval = 1.5) -> Data? {
+    static func get(_ url: String, timeout: TimeInterval = 1.5,
+                    headers: [String: String] = [:]) -> Data? {
         guard let url = URL(string: url) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
 
         var result: Data?
         let done = DispatchSemaphore(value: 0)

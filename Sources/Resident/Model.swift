@@ -46,6 +46,11 @@ struct LoadedModel: Codable, Sendable, Equatable {
     var timeToFirstToken: Double?
     /// Predictions the runtime is serving on this model right now.
     var inFlight: Int = 0
+    /// Set when the model is served by a box elsewhere. Its weights are in that box's
+    /// VRAM, so it takes no part in this machine's memory arithmetic.
+    var remote: RemoteInfo? = nil
+
+    var isRemote: Bool { remote != nil }
 
     /// Runtimes disagree on the spelling — LM Studio says "embeddings", the index
     /// says "embedding" — and an embedding model has no decode loop to put a ceiling on.
@@ -69,11 +74,44 @@ struct LoadedModel: Codable, Sendable, Equatable {
     }
 }
 
+/// What a remote box reports about itself, alongside the model it serves. Every field
+/// is one of the box's own readings; nothing is estimated.
+struct RemoteInfo: Codable, Sendable, Equatable {
+    /// The entry's name in remotes.json — what the provisioner called the box.
+    var name: String
+    /// Who owns the metal: an explicit label, or the registrable domain of a hostname.
+    var provider: String
+    var host: String
+    var gpu: String?
+    /// Fraction of the interval the card was busy, from the box's sidecar.
+    var gpuUtilisation: Double?
+    var gpuMemoryUsed: Int?
+    var gpuMemoryTotal: Int?
+    /// Fraction of the KV cache in use, from vLLM.
+    var kvCacheUsage: Double?
+    /// Requests queued behind the ones running.
+    var queued: Int = 0
+    /// Prompt tokens per second over the last interval — prefill speed.
+    var promptTokensPerSecond: Double?
+    /// Requests the box has parked because its KV cache is full.
+    var waitingForCapacity: Int = 0
+    /// vLLM's cumulative preemption counter: a running request evicted to make room.
+    var preemptions: Int?
+    /// True when preemptions rose since the last sample while requests wait for cache
+    /// or the cache is nearly full — the box is recomputing contexts instead of serving.
+    var thrashing: Bool = false
+}
+
 extension Array where Element == LoadedModel {
-    var totalBytes: Int { reduce(0) { $0 + $1.sizeBytes } }
+    /// Models holding this machine's memory. Remote boxes are excluded from every
+    /// memory figure, because their weights are not here.
+    var local: [LoadedModel] { filter { !$0.isRemote } }
+    var remotes: [LoadedModel] { filter { $0.isRemote } }
+
+    var totalBytes: Int { local.reduce(0) { $0 + $1.sizeBytes } }
 
     /// Models holding memory while doing nothing. These are the reclaim candidates.
-    var idleModels: [LoadedModel] { filter { $0.activity != .generating } }
+    var idleModels: [LoadedModel] { local.filter { $0.activity != .generating } }
 
     /// Deterministic order: busiest first, then largest, so the menu does not reshuffle
     /// under the pointer while a sample lands.

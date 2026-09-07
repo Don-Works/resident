@@ -27,5 +27,12 @@
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+    <!-- Remote vLLM boxes (remotes.json) are reached over plain HTTP on rented
+         machines; ATS would otherwise refuse every non-localhost cleartext request. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

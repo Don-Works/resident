@@ -48,7 +48,13 @@ enum CLI {
             print("No models resident.")
             return
         }
-        print(modelTable(sample.models, peak: Hardware.current.peakBandwidth))
+        if !sample.models.local.isEmpty {
+            print(modelTable(sample.models.local, peak: Hardware.current.peakBandwidth))
+        }
+        if !sample.models.remotes.isEmpty {
+            if !sample.models.local.isEmpty { print("") }
+            print(remoteTable(sample.models.remotes))
+        }
     }
 
     // MARK: - Rendering
@@ -70,12 +76,44 @@ enum CLI {
             if let note = gauge.note { lines.append("        \(note)") }
         }
 
-        if !sample.models.isEmpty {
+        if !sample.models.local.isEmpty {
             lines.append("")
-            lines.append(modelTable(sample.models, peak: Hardware.current.peakBandwidth))
+            lines.append(modelTable(sample.models.local, peak: Hardware.current.peakBandwidth))
+        }
+        if !sample.models.remotes.isEmpty {
+            lines.append("")
+            lines.append(remoteTable(sample.models.remotes))
         }
         lines.append("")
         lines.append(Hardware.current.summary)
+        return lines.joined(separator: "\n")
+    }
+
+    /// Boxes elsewhere. No SIZE or CEILING column: their weights are not in this
+    /// machine's memory and their decode is not bounded by its bus.
+    static func remoteTable(_ remotes: [LoadedModel]) -> String {
+        var lines = [Format.pad("REMOTE MODEL", 26) + Format.pad("PROVIDER · GPU", 26)
+            + Format.pad("STATE", 12) + Format.pad("TOK/S", 9, right: true)
+            + Format.pad("PREFILL", 12, right: true) + Format.pad("REQ", 7, right: true)
+            + Format.pad("KV", 6, right: true) + Format.pad("GPU", 6, right: true) + "  CONTEXT"]
+        for model in remotes {
+            let info = model.remote!
+            let where_ = [info.provider, info.gpu].compactMap { $0 }.joined(separator: " · ")
+            let requests = "\(model.inFlight)" + (info.queued > 0 ? "+\(info.queued)" : "")
+            lines.append(Format.pad(model.displayName, 26) + Format.pad(where_, 26)
+                + Format.pad(model.activity.label, 12)
+                + Format.pad(model.tokensPerSecond.map { Format.tokens($0) } ?? "—", 9, right: true)
+                + Format.pad(info.promptTokensPerSecond.map { Format.tokens($0) } ?? "—", 12, right: true)
+                + Format.pad(requests, 7, right: true)
+                + Format.pad(info.kvCacheUsage.map { Format.percent($0) } ?? "—", 6, right: true)
+                + Format.pad(info.gpuUtilisation.map { Format.percent($0) } ?? "—", 6, right: true)
+                + "  " + (model.contextLength.map { Format.contextLength($0) } ?? "—"))
+        }
+        lines.append("")
+        lines.append("Remote figures are the box's own: vLLM's token counters over the last "
+            + "interval, its KV cache fill, and the sidecar's GPU busy time.")
+        lines.append("TOK/S is the box's total; with several requests running, each one sees "
+            + "roughly TOK/S ÷ REQ.")
         return lines.joined(separator: "\n")
     }
 

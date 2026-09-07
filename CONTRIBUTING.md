@@ -23,7 +23,7 @@ There are no package dependencies and there never should be without a good reaso
 - `Sources/Resident/` — one concern per file, under 300 lines each.
 - Reading layer: `Sysctl`, `Hardware`, `GPU` — kernel and IO registry only. `Bandwidth`
   is documentation, not code: it records why DRAM counters are unreadable.
-- Runtime layer: `LMStudio` (+ `LMStudioStream`), `Ollama`, `LlamaServer`,
+- Runtime layer: `LMStudio` (+ `LMStudioStream`), `Ollama`, `LlamaServer`, `RemoteVLLM` (+ `Remotes`),
   `UnmanagedRuntime`, all `ModelRuntime`.
 - Judgement layer: `Sampler` builds a `Sample`, `Verdict` decides what it means.
 - Presentation: `MenuBar` + `MenuBuilder` for the GUI, `CLI` + `CLIActions` for the terminal.
@@ -56,7 +56,7 @@ cache and the compressor. Ask whether the number goes down on its own before gau
 **Severity is never carried by colour alone, and never by orange.** The menu bar draws
 over the user's wallpaper and flips its own text between black and white to stay
 legible; a status item that paints a fixed colour opts out of that and becomes
-unreadable. So the status item is `.labelColor` with a template image, always, and
+unreadable. So the status item is `.labelColor` with a template image (the one exception is the dark red thrash triangle, which carries the word "thrashing" beside it so colour is never the only signal), and
 level is shown by the icon's silhouette plus font weight. In the dropdown, warn is bold
 label text and only critical takes a colour. `tertiaryLabelColor` is banned outright —
 at 10-11pt it is barely legible.
