@@ -21,12 +21,15 @@ struct Remote: Codable, Equatable, Sendable {
     /// Who owns the metal. Inferred from any hostname in the entry when absent.
     var provider: String?
     var gpu: String?
+    /// Weight precision the box is serving, e.g. `bf16` or `fp8`; vLLM does not report
+    /// it, so the entry says.
+    var quant: String?
     var contextLength: Int?
     /// Another hostname that identifies the provider, e.g. the SSH endpoint.
     var sshHost: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, token, provider, gpu
+        case name, token, provider, gpu, quant
         case baseURL = "base_url"
         case metricsURL = "metrics_url"
         case controlURL = "ctl_url"

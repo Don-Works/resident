@@ -69,15 +69,12 @@ enum MenuBuilder {
                 : "        \(runtimes.joined(separator: ", ")) running, nothing loaded"))
         }
 
-        let peak = Hardware.current.peakBandwidth
         for model in local {
-            let ceiling = model.decodeCeiling(peakBandwidth: peak)
-                .map { "≤ " + Format.tokens($0) } ?? ""
             let measured = model.tokensPerSecond.map { Format.tokens($0) } ?? ""
             let size = Format.bytes(model.sizeBytes) + (model.sizeIsApproximate ? "~" : "")
             let line = "\(activityMark(model))  \(Format.pad(size, 10, right: true))  "
-                + "\(Format.pad(model.displayName, 26))\(Format.pad(measured, 10, right: true))"
-                + "\(Format.pad(ceiling, 13, right: true))"
+                + "\(Format.pad(model.displayName, 26))\(Format.pad(model.quantisation ?? "", 9))"
+                + "\(Format.pad(measured, 10, right: true))"
 
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = NSAttributedString(
@@ -89,7 +86,7 @@ enum MenuBuilder {
 
         if !local.isEmpty {
             menu.addItem(caption("        ▶ generating · tok/s is the runtime's figure for its "
-                + "last prediction · ≤ is the ceiling set by memory bandwidth"))
+                + "last prediction"))
         }
 
         buildRemotes(into: menu, remotes: sample.models.remotes)
@@ -112,7 +109,8 @@ enum MenuBuilder {
             let kv = info.kvCacheUsage.map { "kv " + Format.percent($0) } ?? ""
             let busy = info.gpuUtilisation.map { "gpu " + Format.percent($0) } ?? ""
             let line = "\(activityMark(model))  ☁ \(Format.pad(where_, 22))"
-                + "\(Format.pad(model.displayName, 20))\(Format.pad(rate, 10, right: true))"
+                + "\(Format.pad(model.displayName, 20))\(Format.pad(model.quantisation ?? "", 6))"
+                + "\(Format.pad(rate, 10, right: true))"
                 + "\(Format.pad(flight, 9, right: true))\(Format.pad(each, 12, right: true))"
                 + "\(Format.pad(kv, 8, right: true))\(Format.pad(busy, 9, right: true))"
 
@@ -130,7 +128,8 @@ enum MenuBuilder {
     private static func remoteSubmenu(for model: LoadedModel) -> NSMenu {
         let info = model.remote!
         let submenu = NSMenu()
-        submenu.addItem(caption("\(model.runtime) · \(model.identifier)"))
+        submenu.addItem(caption("\(model.runtime) · \(model.identifier)"
+            + (model.quantisation.map { " · \($0)" } ?? "")))
         submenu.addItem(caption("\(info.name) on \(info.provider)"
             + (info.gpu.map { " · \($0)" } ?? "") + " · \(info.host)"))
         if let rate = model.tokensPerSecond, let at = model.measuredAt {

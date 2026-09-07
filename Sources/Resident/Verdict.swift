@@ -81,14 +81,7 @@ struct Verdict {
                 + "runtime overhead")
         }
 
-        // The number that explains why a big model feels slow. It is arithmetic, not a
-        // measurement: one token means reading every weight once.
-        if let slowest = slowestCeiling(models, peak: hardware.peakBandwidth) {
-            lines.append("\(slowest.0) can decode at most "
-                + "\(Format.tokens(slowest.1)) on this machine's bus")
-        }
-
-        if let measured = throughput(sample: sample, hardware: hardware) {
+        if let measured = throughput(sample: sample) {
             lines.append(measured)
         }
 
@@ -127,28 +120,15 @@ struct Verdict {
         }
     }
 
-    /// What the working model actually managed, set against its bus ceiling. The rate
-    /// is the runtime's own figure for the prediction it last completed.
-    private static func throughput(sample: Sample, hardware: Hardware) -> String? {
+    /// What the working model actually managed: the runtime's own figure for the
+    /// prediction it last completed. No ceiling is set against it — a mixture-of-experts
+    /// model beats the dense arithmetic, and a bound the screen contradicts is worse
+    /// than none.
+    private static func throughput(sample: Sample) -> String? {
         guard let model = sample.working, !model.isRemote,
               let rate = model.tokensPerSecond else { return nil }
         let verb = model.activity == .generating ? "is decoding" : "last decoded"
-        let head = "\(model.displayName) \(verb) at \(Format.tokens(rate))"
-
-        guard let ceiling = model.decodeCeiling(peakBandwidth: hardware.peakBandwidth) else {
-            return head
-        }
-        let share = rate / ceiling
-        if share > 1.05 {
-            return head + " — above the dense-weight ceiling, so it reads fewer weights "
-                + "per token than its size suggests (mixture-of-experts or speculative decoding)"
-        }
-        if share >= 0.7 {
-            return head + " — \(Format.percent(share)) of its bus ceiling; memory bandwidth "
-                + "is the limit, and only a smaller quantisation moves it"
-        }
-        return head + " — \(Format.percent(share)) of its bus ceiling, so something other "
-            + "than bandwidth is holding it back"
+        return "\(model.displayName) \(verb) at \(Format.tokens(rate))"
     }
 
     private static func warnings(sample: Sample, hardware: Hardware, thresholds: Thresholds,
@@ -252,12 +232,4 @@ struct Verdict {
         models.max { $0.sizeBytes < $1.sizeBytes }
     }
 
-    /// The largest generative model, and its decode ceiling — the one that sets the pace.
-    private static func slowestCeiling(_ models: [LoadedModel],
-                                       peak: Double?) -> (String, Double)? {
-        let candidates = models.filter { !$0.isEmbedding && !$0.sizeIsApproximate }
-        guard let biggest = candidates.max(by: { $0.sizeBytes < $1.sizeBytes }),
-              let ceiling = biggest.decodeCeiling(peakBandwidth: peak) else { return nil }
-        return (biggest.displayName, ceiling)
-    }
 }

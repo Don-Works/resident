@@ -64,7 +64,7 @@ final class RemoteVLLM: ModelRuntime {
                 identifier: modelName,
                 displayName: modelName,
                 sizeBytes: 0,
-                quantisation: nil,
+                quantisation: remote.quant,
                 parameters: nil,
                 architecture: nil,
                 kind: nil,

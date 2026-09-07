@@ -35,9 +35,11 @@ These are the constraints that make the tool trustworthy. Please don't relax the
 **Never show a number you cannot source.** Every gauge is a real reading or is marked
 `informational` with a note. When memory bandwidth turned out to be unreadable even as
 root, the gauge was deleted rather than estimated — see `Bandwidth.swift`. The decode
-ceiling is arithmetic (bus ÷ weight bytes), not a measurement, and is labelled as such
-wherever it appears. Throughput is the runtime's own figure for a prediction it
-completed, and is labelled as that.
+ceiling is arithmetic (bus ÷ weight bytes), not a measurement; it appears only in the
+`resident status` table, labelled as such, and not in the menu, because a
+mixture-of-experts model beats it and a bound the screen contradicts is worse than
+none. Throughput is the runtime's own figure for a prediction it completed, and is
+labelled as that.
 
 **No privileges, ever.** There is no helper and no daemon. If a feature needs root, it
 does not ship.
@@ -56,8 +58,10 @@ cache and the compressor. Ask whether the number goes down on its own before gau
 **Severity is never carried by colour alone, and never by orange.** The menu bar draws
 over the user's wallpaper and flips its own text between black and white to stay
 legible; a status item that paints a fixed colour opts out of that and becomes
-unreadable. So the status item is `.labelColor` with a template image (the one exception is the dark red thrash triangle, which carries the word "thrashing" beside it so colour is never the only signal), and
-level is shown by the icon's silhouette plus font weight. In the dropdown, warn is bold
+unreadable. So the status item is `.labelColor` text — provider · model · quant · tok/s
+· gpu, no glyphs — with a template image only from warn upwards (the one exception is
+the dark red thrash triangle, which carries the word "thrashing" beside it so colour is
+never the only signal), and level is otherwise carried by font weight. In the dropdown, warn is bold
 label text and only critical takes a colour. `tertiaryLabelColor` is banned outright —
 at 10-11pt it is barely legible.
 

@@ -94,15 +94,16 @@ GPU is actually working:
 ```
 
 While a model is working it also shows which one, and the decode rate its runtime
-reported:
+reported, in five fixed fields — provider, model, quant, tok/s, gpu:
 
 ```
-▣ ▶ Qwen3.8 27B 15 tok/s  28G  gpu 91%
+local · Qwen3.8 27B · Q4_K_M · 15 tok/s · gpu 91%
 ```
 
-The `▶` means a prediction is running now. The name and rate stay for half a minute
-after the last one finishes, so an agent issuing a request every few seconds reads as
-one continuous job rather than a flicker.
+The name and rate stay for half a minute after the last prediction finishes, so an
+agent issuing a request every few seconds reads as one continuous job rather than a
+flicker. A field with no reading is left out. The icon appears only from warn upwards;
+with room to spare the bar carries the title alone.
 
 Open the menu for the verdict, the ceilings, and a row per model. Each model row is a
 submenu carrying its quantisation, context window, idle timeout, last measured rate,
@@ -163,18 +164,18 @@ Two things are worth knowing about the LM Studio path:
   written to disk beyond a rate and a timestamp.
 
 The stream reports at the *end* of each prediction, so the rate shown lags the
-generation it describes by one request. During a long generation you see the `▶` and
-the previous rate; the new one lands when it finishes.
+generation it describes by one request. During a long generation the row keeps its `▶`
+and the previous rate; the new one lands when it finishes.
 
 llama-server exposes its counters only when started with `--metrics`, and slot state
-only with `--slots`. Without them Resident shows the model and its ceiling, and nothing
-it cannot source.
+only with `--slots`. Without them Resident shows the model, and nothing it cannot
+source.
 
 ---
 
 ## The decode ceiling
 
-Every model row carries a number like `≤ 18 tok/s`. That is:
+`resident status` prints a `CEILING` column beside each local model's rate. That is:
 
 ```
 ceiling = memory bandwidth ÷ weight bytes
@@ -184,11 +185,12 @@ Autoregressive decoding reads the whole active weight set once per token, so thi
 hard upper bound on tokens per second, set by the memory bus alone. It is arithmetic,
 not a measurement — real throughput lands below it.
 
-Two honest caveats, both stated in the app:
+Two honest caveats, both stated in the report:
 
 - **Mixture-of-experts models beat it.** They read only their active experts per token,
-  so a sparse 27B behaves like a much smaller dense model. The ceiling shown assumes
-  dense weights and is pessimistic for MoE.
+  so a sparse 27B behaves like a much smaller dense model. The ceiling assumes dense
+  weights and is pessimistic for MoE — which is why the menu does not show it: a sparse
+  model beats it, and a bound the screen contradicts is worse than none.
 - **Prompt processing is not decoding.** Prefill is compute-bound and runs far faster;
   this bound applies to generation.
 
@@ -278,17 +280,17 @@ under [Live throughput](#live-throughput) when it is open, and from that cache o
 The same menu can carry a model that is not on this machine at all — a GPU rented by
 the hour, a box in the cupboard — as long as it is served by **vLLM**. Local and remote
 sit in the same menu, marked apart: a remote row starts with `☁`, and the menu bar
-title reads `▶ ☁ qwen3.8-27b 71 tok/s` while a remote is the model doing the work.
+title reads `vast.ai · qwen3.8-27b · fp8 · 71 tok/s · gpu 100%` while a remote is the
+model doing the work.
 
 ```
 Remote boxes
-▶  ☁ vast.ai · H100 SXM    qwen3.8-27b    71 tok/s    2 req  kv 66%  gpu 100%
+▶  ☁ vast.ai · H100 SXM    qwen3.8-27b   fp8    71 tok/s    2 req  kv 66%  gpu 100%
 ```
 
 Nothing about a remote touches the memory arithmetic. Its weights are in someone else's
-VRAM, so it is excluded from the weights gauge, the headroom, the paging verdict and the
-decode ceiling, which is a fact about *this* machine's bus. It gets its own line in the
-verdict instead.
+VRAM, so it is excluded from the weights gauge, the headroom and the paging verdict. It
+gets its own line in the verdict instead.
 
 ### The connector
 
@@ -311,6 +313,7 @@ The full shape, which is what a provisioner writes:
     "ctl_url": "http://203.0.113.10:19983",
     "token": "…",
     "gpu": "H100 SXM",
+    "quant": "fp8",
     "context": 262144,
     "ssh": "ssh2.vast.ai:11354"
   }
@@ -322,7 +325,7 @@ The full shape, which is what a provisioner writes:
 | `base_url` | Where vLLM answers. `/metrics` is derived from it (`/v1` → `/metrics`) unless `metrics_url` says otherwise. |
 | `ctl_url` + `token` | Optional sidecar that answers `GET /gpu` — see below. Without it there is no GPU utilisation, because vLLM does not export one. |
 | `provider` | Who owns the metal. When absent it is **inferred**: the registrable domain of the first real hostname in the entry (`ssh2.vast.ai` → `vast.ai`). An IP address says nothing, and there is no vendor list in the code. |
-| `gpu`, `context` | Labels for the row. The sidecar's card name fills in `gpu` when the entry has none. |
+| `gpu`, `quant`, `context` | Labels for the row. The sidecar's card name fills in `gpu` when the entry has none; vLLM does not report weight precision, so `quant` is the entry's to say. |
 
 The file is read on every sample, so a provisioner can add a box when it comes up and
 remove it when the box is destroyed. Everything shown for a remote is one of the box's
@@ -356,11 +359,14 @@ provisioner can do the same with a JSON write.
 
 ### The status item names its source
 
-Whichever model is producing the most tokens takes the menu bar title, and the title says
-where it runs: `▶ Qwen3.8 27B 14 tok/s · mac gpu 54%` for a local model, `▶ ☁ vast.ai
-qwen3.8-27b 39 tok/s ×2 · gpu 100%` for a box, where the rate is each request's share of
-the box's total and `gpu` is the box's card, never this Mac's. Idle, both are listed with
-their own label. The tooltip spells out what every figure is and where it was read.
+Whichever model is producing the most tokens takes the menu bar title, in five fixed
+fields — provider, model, quant, tok/s, gpu: `local · Qwen3.8 27B · Q4_K_M · 14 tok/s ·
+gpu 54%` for a local model, `vast.ai · qwen3.8-27b · fp8 · 39 tok/s ×2 · gpu 100%` for a
+box, where the rate is each request's share of the box's total, `×2` is how many share
+it, and `gpu` is the box's card, never this Mac's. A field with no reading is left out,
+nothing is a glyph, and a thrashing box says so in a word. Idle, each machine is listed
+with its own gpu figure. The tooltip spells out what every figure is and where it was
+read.
 
 ### The thrash alert
 
@@ -391,13 +397,11 @@ osascript -e 'tell application "System Events" to tell process "Resident" \
   to get description of every menu bar item of menu bar 1'
 ```
 
-**A model shows no decode ceiling.** Either it is an embedding model, which has no
-decode loop, or its size came from a process scan and would be a fiction.
-
 **The rate looks low.** Check the submenu: a long prompt makes a request slow without
-the decode being slow, and a second request in flight halves what each one gets. Compare
-the rate with the `≤` ceiling on the same row — a dense model at 80-100% of it is running
-as fast as the memory bus allows, and only a smaller quantisation changes that.
+the decode being slow, and a second request in flight halves what each one gets. For a
+dense model, `resident status` prints the bus ceiling beside the rate — at 80-100% of it
+the model is running as fast as the memory bus allows, and only a smaller quantisation
+changes that.
 
 **A model shows no `tok/s`.** Nothing has completed a prediction on it since Resident
 started, or the runtime does not report one — see [Live throughput](#live-throughput).
