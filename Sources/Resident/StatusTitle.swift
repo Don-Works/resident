@@ -15,44 +15,58 @@ enum StatusTitle {
         var parts: [String] = []
         if let box = verdict.thrashing.first?.remote { parts.append("\(box.name) thrashing") }
 
-        if let working = sample.working {
-            parts += fields(for: working, sample: sample)
-            return Rendering(text: join(parts),
-                             legend: legend(for: working, sample: sample, interval: interval))
-        }
-        if sample.models.isEmpty {
+        guard let headline = sample.working ?? lastMeasured(sample) else {
             parts.append("idle")
             return Rendering(text: join(parts),
                              legend: ["idle — nothing is loaded here or on a listed box"])
         }
-        parts += idleFields(sample)
-        return Rendering(text: join(parts),
-                         legend: ["idle — each gpu figure is labelled with the machine it belongs to"])
+        parts += fields(for: headline, sample: sample)
+        parts += otherMachines(than: headline, sample: sample)
+        var legend = legend(for: headline, sample: sample, interval: interval)
+        if sample.working == nil {
+            legend.insert("idle — the last model to report a rate keeps the title", at: 0)
+        }
+        return Rendering(text: join(parts), legend: legend)
+    }
+
+    /// Nothing generating and nothing measured within the hold: the model whose last
+    /// rate is newest keeps the title, so tok/s never disappears from the bar while
+    /// anything is loaded; failing a rate, the largest local model.
+    private static func lastMeasured(_ sample: Sample) -> LoadedModel? {
+        let generative = sample.models.filter { !$0.isEmbedding }
+        if let measured = generative.filter({ $0.measuredAt != nil })
+            .max(by: { ($0.measuredAt ?? 0) < ($1.measuredAt ?? 0) }) { return measured }
+        return generative.local.max { $0.sizeBytes < $1.sizeBytes } ?? generative.first
+    }
+
+    /// The machines the headline is not on, each with its own gpu figure, so a number
+    /// is never read against the wrong one.
+    private static func otherMachines(than headline: LoadedModel, sample: Sample) -> [String] {
+        var parts: [String] = []
+        if headline.isRemote, !sample.models.local.isEmpty {
+            parts += ["local", gpu(fraction: sample.gpuUtilisation)]
+        }
+        for model in sample.models.remotes where model.remote?.host != headline.remote?.host {
+            parts += [provider(of: model), gpu(of: model, sample: sample)]
+        }
+        return parts
     }
 
     /// `vast.ai · qwen3.8-27b · bf16 · 36 tok/s ×2 · gpu 100%` for a box with two
     /// requests on it, where the rate is each request's share of the box's total;
     /// `local · Qwen3.8 27B · Q4_K_M · 25 tok/s · gpu 54%` for this Mac. A remote rate is
-    /// vLLM's counters over the last sample interval; a local one is the runtime's own
-    /// figure for its last completed prediction, so it lags the generation.
+    /// vLLM's counters over the last sample interval, a box-wide total, so it is divided
+    /// among the requests sharing it; a local one is the runtime's own figure for a
+    /// single prediction it completed, already per request, so it is never divided.
     static func fields(for model: LoadedModel, sample: Sample) -> [String] {
         var parts = [provider(of: model), Format.shortName(model.displayName, limit: 18)]
         if let quantisation = model.quantisation { parts.append(quantisation) }
         if let rate = model.tokensPerSecond {
-            parts.append(model.inFlight > 1
+            parts.append(model.isRemote && model.inFlight > 1
                 ? "\(Format.tokens(rate / Double(model.inFlight))) ×\(model.inFlight)"
                 : Format.tokens(rate))
         }
         parts.append(gpu(of: model, sample: sample))
-        return parts
-    }
-
-    /// Nothing generating: each machine and its GPU, so a figure is never read against
-    /// the wrong one.
-    static func idleFields(_ sample: Sample) -> [String] {
-        var parts: [String] = []
-        if !sample.models.local.isEmpty { parts += ["local", gpu(fraction: sample.gpuUtilisation)] }
-        for model in sample.models.remotes { parts += [provider(of: model), gpu(of: model, sample: sample)] }
         return parts
     }
 

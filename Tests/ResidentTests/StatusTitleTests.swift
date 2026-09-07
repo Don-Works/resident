@@ -31,7 +31,7 @@ final class StatusTitleTests: XCTestCase {
                         quant: "bf16", rate: 52, inFlight: 2)
         let local = model("Qwen3.8 27B", quant: "Q4_K_M", activity: .loaded, size: 27 << 30)
         let rendering = render(sample([box, local], gpu: 0.04))
-        XCTAssertEqual(rendering.text, "vast.ai · qwen3.8-27b · bf16 · 26 tok/s ×2 · gpu 100%")
+        XCTAssertEqual(rendering.text, "vast.ai · qwen3.8-27b · bf16 · 26 tok/s ×2 · gpu 100% · local · gpu 4%")
         XCTAssertTrue(rendering.legend.contains { $0.hasPrefix("this mac: gpu 4%") }, "\(rendering.legend)")
     }
 
@@ -52,11 +52,28 @@ final class StatusTitleTests: XCTestCase {
         XCTAssertEqual(rendering.text, "vast-box thrashing · vast.ai · qwen3.8-27b · 9.0 tok/s · gpu 97%")
     }
 
-    func testIdleListsEachMachineWithItsOwnGPU() {
+    func testIdleKeepsTheLastMeasuredModelsFiveFieldsAndListsTheOtherMachine() {
         let box = model("qwen3.8-27b", remote: RemoteInfo(name: "vast-box", provider: "vast.ai", host: "box:1",
-                                                          gpuUtilisation: 0), activity: .loaded)
-        let local = model("Qwen3.8 27B", activity: .loaded, size: 27 << 30)
-        XCTAssertEqual(render(sample([local, box], gpu: 0.04)).text, "local · gpu 4% · vast.ai · gpu 0%")
+                                                          gpuUtilisation: 0), quant: "fp8", activity: .loaded)
+        var local = model("Qwen3.8 27B", quant: "8bit", rate: 26, activity: .idle, size: 27 << 30)
+        local.measuredAt = Date().timeIntervalSince1970 - 600   // well past the working hold
+        let rendering = render(sample([local, box], gpu: 0.04))
+        XCTAssertEqual(rendering.text, "local · Qwen3.8 27B · 8bit · 26 tok/s · gpu 4% · vast.ai · gpu 0%")
+        XCTAssertEqual(rendering.legend.first, "idle — the last model to report a rate keeps the title")
+    }
+
+    func testIdleWithNoRateYetNamesTheLargestLocalModel() {
+        let embed = model("Nomic Embed", activity: .idle, size: 80 << 20)
+        var big = model("Qwen3.8 27B", quant: "8bit", activity: .loaded, size: 27 << 30)
+        big.kind = "llm"
+        var small = model("Tiny", activity: .loaded, size: 1 << 30)
+        small.kind = "llm"
+        XCTAssertEqual(render(sample([embed, small, big], gpu: 0.02)).text, "local · Qwen3.8 27B · 8bit · gpu 2%")
+    }
+
+    func testLocalRateIsPerPredictionAndNeverDividedByInFlight() {
+        let rendering = render(sample([model("Qwen3.8 27B", quant: "8bit", rate: 20, inFlight: 2, size: 27 << 30)], gpu: 0.9))
+        XCTAssertEqual(rendering.text, "local · Qwen3.8 27B · 8bit · 20 tok/s · gpu 90%")
     }
 
     func testNothingLoadedIsIdle() {

@@ -165,7 +165,10 @@ Two things are worth knowing about the LM Studio path:
 
 The stream reports at the *end* of each prediction, so the rate shown lags the
 generation it describes by one request. During a long generation the row keeps its `▶`
-and the previous rate; the new one lands when it finishes.
+and the previous rate; the new one lands when it finishes. The rate is tokens over the
+window between the first token and the end, so a prediction that was stopped early,
+produced fewer than 16 tokens, or generated for under a second does not update it —
+there is no window to measure, and the previous reading stands.
 
 llama-server exposes its counters only when started with `--metrics`, and slot state
 only with `--slots`. Without them Resident shows the model, and nothing it cannot
@@ -364,9 +367,11 @@ fields — provider, model, quant, tok/s, gpu: `local · Qwen3.8 27B · Q4_K_M �
 gpu 54%` for a local model, `vast.ai · qwen3.8-27b · fp8 · 39 tok/s ×2 · gpu 100%` for a
 box, where the rate is each request's share of the box's total, `×2` is how many share
 it, and `gpu` is the box's card, never this Mac's. A field with no reading is left out,
-nothing is a glyph, and a thrashing box says so in a word. Idle, each machine is listed
-with its own gpu figure. The tooltip spells out what every figure is and where it was
-read.
+nothing is a glyph, and a thrashing box says so in a word. The other machine follows
+with its own gpu figure (`· local · gpu 4%`), so a number is never read against the wrong
+one. Idle, the last model to report a rate keeps the title, so tok/s never leaves the
+bar while anything is loaded. The tooltip spells out what every figure is and where it
+was read.
 
 ### The thrash alert
 

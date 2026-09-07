@@ -18,17 +18,30 @@ final class LMStudioStream {
         var promptTokens: Int?
         var timeToFirstToken: Double?
 
+        /// A prediction shorter than this says nothing about decode speed. Tokens over
+        /// the window between the first token and the end is the rate, and a client
+        /// killed a few tokens in leaves a window of milliseconds that turns eight
+        /// tokens into "131 tok/s" — seen beside a real 13 on a 27B at 76K context.
+        static let minimumTokens = 16.0
+        static let minimumWindow: TimeInterval = 1.0
+        /// Reasons that mean the prediction did not run its course.
+        static let cutShort: Set<String> = ["userStopped", "modelUnloaded", "failed"]
+
         /// LM Studio's `tokensPerSecond` divides by the whole request, prompt processing
         /// included — an 85K-token context takes half a minute before the first token
         /// and drags a 19 tok/s decode down to 11. Generation time alone is the rate
-        /// that says how fast the model runs; the prompt cost is kept alongside.
+        /// that says how fast the model runs; the prompt cost is kept alongside. A
+        /// prediction cut short, or too short to measure, leaves the previous reading
+        /// standing rather than replacing it with a number from a window too small to
+        /// carry one.
         init?(stats: [String: Any], at: Double) {
             let predicted = (stats["predictedTokensCount"] as? Double) ?? 0
             let total = (stats["totalTimeSec"] as? Double) ?? 0
             let first = (stats["timeToFirstTokenSec"] as? Double) ?? 0
-            let reported = (stats["tokensPerSecond"] as? Double) ?? 0
             let generating = total - first
-            let decode = predicted > 1 && generating > 0.05 ? (predicted - 1) / generating : reported
+            if let reason = stats["stopReason"] as? String, Self.cutShort.contains(reason) { return nil }
+            guard predicted >= Self.minimumTokens, generating >= Self.minimumWindow else { return nil }
+            let decode = (predicted - 1) / generating
             guard decode > 0 else { return nil }
             tokensPerSecond = decode
             self.at = at
