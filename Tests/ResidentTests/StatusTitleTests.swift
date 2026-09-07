@@ -31,7 +31,7 @@ final class StatusTitleTests: XCTestCase {
                         quant: "bf16", rate: 52, inFlight: 2)
         let local = model("Qwen3.8 27B", quant: "Q4_K_M", activity: .loaded, size: 27 << 30)
         let rendering = render(sample([box, local], gpu: 0.04))
-        XCTAssertEqual(rendering.text, "vast.ai · qwen3.8-27b · bf16 · 26 tok/s ×2 · gpu 100% · local · gpu 4%")
+        XCTAssertEqual(rendering.text, "vast.ai · qwen3.8-27b · bf16 · 26 tok/s ×2 · gpu 100%")
         XCTAssertTrue(rendering.legend.contains { $0.hasPrefix("this mac: gpu 4%") }, "\(rendering.legend)")
     }
 
@@ -52,14 +52,25 @@ final class StatusTitleTests: XCTestCase {
         XCTAssertEqual(rendering.text, "vast-box thrashing · vast.ai · qwen3.8-27b · 9.0 tok/s · gpu 97%")
     }
 
-    func testIdleKeepsTheLastMeasuredModelsFiveFieldsAndListsTheOtherMachine() {
+    func testIdleKeepsTheFastestModelsFiveFieldsAlone() {
         let box = model("qwen3.8-27b", remote: RemoteInfo(name: "vast-box", provider: "vast.ai", host: "box:1",
                                                           gpuUtilisation: 0), quant: "fp8", activity: .loaded)
         var local = model("Qwen3.8 27B", quant: "8bit", rate: 26, activity: .idle, size: 27 << 30)
         local.measuredAt = Date().timeIntervalSince1970 - 600   // well past the working hold
         let rendering = render(sample([local, box], gpu: 0.04))
-        XCTAssertEqual(rendering.text, "local · Qwen3.8 27B · 8bit · 26 tok/s · gpu 4% · vast.ai · gpu 0%")
-        XCTAssertEqual(rendering.legend.first, "idle — the last model to report a rate keeps the title")
+        XCTAssertEqual(rendering.text, "local · Qwen3.8 27B · 8bit · 26 tok/s · gpu 4%")
+        XCTAssertEqual(rendering.legend.first, "the model with the highest rate on record keeps the title")
+    }
+
+    func testTheHighestRateOnRecordWinsEvenWhenAnotherModelIsGenerating() {
+        let box = model("qwen3.8-27b", remote: RemoteInfo(name: "vast-box", provider: "vast.ai", host: "box:1",
+                                                          gpuUtilisation: 0.1), quant: "fp8", rate: 44, activity: .loaded)
+        let local = model("Qwen3.8 27B", quant: "8bit", rate: 13, size: 27 << 30)   // generating right now
+        XCTAssertEqual(render(sample([local, box], gpu: 0.99)).text, "vast.ai · qwen3.8-27b · fp8 · 44 tok/s · gpu 10%")
+        // A box's total is shared per request before it is compared.
+        let shared = model("qwen3.8-27b", remote: RemoteInfo(name: "vast-box", provider: "vast.ai", host: "box:1",
+                                                             gpuUtilisation: 1.0), quant: "fp8", rate: 52, inFlight: 4)
+        XCTAssertEqual(render(sample([local, shared], gpu: 0.99)).text, "local · Qwen3.8 27B · 8bit · 13 tok/s · gpu 99%")
     }
 
     func testIdleWithNoRateYetNamesTheLargestLocalModel() {

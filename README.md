@@ -362,16 +362,15 @@ provisioner can do the same with a JSON write.
 
 ### The status item names its source
 
-Whichever model is producing the most tokens takes the menu bar title, in five fixed
-fields — provider, model, quant, tok/s, gpu: `local · Qwen3.8 27B · Q4_K_M · 14 tok/s ·
-gpu 54%` for a local model, `vast.ai · qwen3.8-27b · fp8 · 39 tok/s ×2 · gpu 100%` for a
-box, where the rate is each request's share of the box's total, `×2` is how many share
-it, and `gpu` is the box's card, never this Mac's. A field with no reading is left out,
-nothing is a glyph, and a thrashing box says so in a word. The other machine follows
-with its own gpu figure (`· local · gpu 4%`), so a number is never read against the wrong
-one. Idle, the last model to report a rate keeps the title, so tok/s never leaves the
-bar while anything is loaded. The tooltip spells out what every figure is and where it
-was read.
+The model with the highest rate on record takes the menu bar title, alone, in five
+fixed fields — provider, model, quant, tok/s, gpu: `local · Qwen3.8 27B · Q4_K_M · 14
+tok/s · gpu 54%` for a local model, `vast.ai · qwen3.8-27b · fp8 · 39 tok/s ×2 · gpu
+100%` for a box, where the rate is each request's share of the box's total, `×2` is how
+many share it, and `gpu` is the box's card, never this Mac's. A rate outlives the request
+that produced it, so the title does not swap as requests start and stop. A field with
+no reading is left out, nothing is a glyph, and a thrashing box says so in a word. The
+tooltip spells out what every figure is, where it was read, and what the other machine
+is doing.
 
 ### The thrash alert
 

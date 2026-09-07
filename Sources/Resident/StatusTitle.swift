@@ -1,9 +1,11 @@
 import Foundation
 
-/// The status item's text: provider · model · quant · tok/s · gpu, in that order,
-/// whichever machine is doing the work. A field with no reading is left out rather
-/// than filled with a dash, and nothing is a glyph — a box that is thrashing says so
-/// in a word. Kept free of AppKit so the exact string is testable.
+/// The status item's text: provider · model · quant · tok/s · gpu, in that order, for
+/// one model only — the one with the highest rate on record, wherever it runs. Nothing
+/// else shares the bar, and the choice does not move as requests start and stop, since
+/// a rate outlives the request that produced it. A field with no reading is left out
+/// rather than filled with a dash, and nothing is a glyph — a box that is thrashing
+/// says so in a word. Kept free of AppKit so the exact string is testable.
 enum StatusTitle {
     struct Rendering: Equatable {
         var text: String
@@ -15,41 +17,31 @@ enum StatusTitle {
         var parts: [String] = []
         if let box = verdict.thrashing.first?.remote { parts.append("\(box.name) thrashing") }
 
-        guard let headline = sample.working ?? lastMeasured(sample) else {
+        guard let headline = fastest(sample) else {
             parts.append("idle")
             return Rendering(text: join(parts),
                              legend: ["idle — nothing is loaded here or on a listed box"])
         }
         parts += fields(for: headline, sample: sample)
-        parts += otherMachines(than: headline, sample: sample)
         var legend = legend(for: headline, sample: sample, interval: interval)
-        if sample.working == nil {
-            legend.insert("idle — the last model to report a rate keeps the title", at: 0)
+        if headline.activity != .generating {
+            legend.insert("the model with the highest rate on record keeps the title", at: 0)
         }
         return Rendering(text: join(parts), legend: legend)
     }
 
-    /// Nothing generating and nothing measured within the hold: the model whose last
-    /// rate is newest keeps the title, so tok/s never disappears from the bar while
-    /// anything is loaded; failing a rate, the largest local model.
-    private static func lastMeasured(_ sample: Sample) -> LoadedModel? {
+    /// The model with the highest rate as the bar would show it — a box's total shared
+    /// per request — generating or not; failing any rate, the largest local model.
+    private static func fastest(_ sample: Sample) -> LoadedModel? {
         let generative = sample.models.filter { !$0.isEmbedding }
-        if let measured = generative.filter({ $0.measuredAt != nil })
-            .max(by: { ($0.measuredAt ?? 0) < ($1.measuredAt ?? 0) }) { return measured }
+        if let best = generative.filter({ $0.tokensPerSecond != nil })
+            .max(by: { shownRate($0) < shownRate($1) }) { return best }
         return generative.local.max { $0.sizeBytes < $1.sizeBytes } ?? generative.first
     }
 
-    /// The machines the headline is not on, each with its own gpu figure, so a number
-    /// is never read against the wrong one.
-    private static func otherMachines(than headline: LoadedModel, sample: Sample) -> [String] {
-        var parts: [String] = []
-        if headline.isRemote, !sample.models.local.isEmpty {
-            parts += ["local", gpu(fraction: sample.gpuUtilisation)]
-        }
-        for model in sample.models.remotes where model.remote?.host != headline.remote?.host {
-            parts += [provider(of: model), gpu(of: model, sample: sample)]
-        }
-        return parts
+    private static func shownRate(_ model: LoadedModel) -> Double {
+        guard let rate = model.tokensPerSecond else { return 0 }
+        return model.isRemote && model.inFlight > 1 ? rate / Double(model.inFlight) : rate
     }
 
     /// `vast.ai · qwen3.8-27b · bf16 · 36 tok/s ×2 · gpu 100%` for a box with two
