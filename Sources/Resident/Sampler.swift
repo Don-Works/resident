@@ -25,6 +25,7 @@ final class Sampler {
     func stop() { runtimes.forEach { $0.stop() } }
 
     func take() -> Sample {
+        let startedAt = Date().timeIntervalSince1970
         var models: [LoadedModel] = []
         var seen: [String] = []
         for runtime in runtimes where runtime.isPresent() {
@@ -49,7 +50,7 @@ final class Sampler {
         )
 
         return Sample(
-            ts: Date().timeIntervalSince1970,
+            ts: startedAt,
             gauges: gauges(models: models.local, memory: snapshot, gpu: gpu),
             models: models.ranked,
             memory: snapshot,
