@@ -91,23 +91,17 @@ struct Sample: Codable, Sendable {
         gauges.map { $0.level(thresholds) }.max() ?? .ok
     }
 
-    /// A finished measurement stays "current" for this long. An agent loop issues a
-    /// request every few seconds; without a hold the menu bar would flip between the
-    /// model's name and the memory figure on every sample.
-    static let workingHold: TimeInterval = 30
-
-    /// The model doing the work: one with a prediction in flight, else the one whose
-    /// last prediction finished within the hold.
+    /// Only a request currently in flight can own the activity headline.
     var working: LoadedModel? {
-        // Several can be generating at once — a local model and a rented box, say. The
-        // headline goes to whichever is producing the most tokens right now.
-        let busy = models.filter { $0.activity == .generating }
-        if let fastest = busy.max(by: { ($0.tokensPerSecond ?? 0) < ($1.tokensPerSecond ?? 0) }) {
-            return fastest
-        }
-        return models
-            .filter { model in model.measuredAt.map { ts - $0 <= Self.workingHold } ?? false }
-            .max { ($0.measuredAt ?? 0) < ($1.measuredAt ?? 0) }
+        models.filter { $0.activity == .generating || $0.activity == .loading }.sorted {
+            if ($0.activity == .generating) != ($1.activity == .generating) { return $0.activity == .generating }
+            let left = $0.currentRate(at: ts) ?? 0
+            let right = $1.currentRate(at: ts) ?? 0
+            if left != right { return left > right }
+            if $0.inFlight != $1.inFlight { return $0.inFlight > $1.inFlight }
+            if $0.sizeBytes != $1.sizeBytes { return $0.sizeBytes > $1.sizeBytes }
+            return $0.identifier < $1.identifier
+        }.first
     }
 
     /// Codable mirror of `MemoryStats.Snapshot`, so a sample can be written to disk.

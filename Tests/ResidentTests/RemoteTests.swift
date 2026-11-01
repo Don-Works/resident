@@ -73,7 +73,7 @@ final class RemoteTests: XCTestCase {
         remote.remote = RemoteInfo(name: "box", provider: "vast.ai", host: "box:1")
         let models = [local, remote]
         XCTAssertEqual(models.totalBytes, 10 << 30)
-        XCTAssertEqual(models.idleModels.map(\.identifier), ["a"])
+        XCTAssertEqual(models.idleModels.map(\.identifier), [])
         XCTAssertEqual(models.remotes.map(\.identifier), ["b"])
     }
 
@@ -82,7 +82,7 @@ final class RemoteTests: XCTestCase {
                                  sizeBytes: 0, quantisation: nil, parameters: nil, architecture: nil, kind: nil,
                                  contextLength: 262_144, maxContextLength: nil, activity: .generating,
                                  timeToLive: nil, tokensPerSecond: 52, measuredAt: Date().timeIntervalSince1970,
-                                 inFlight: 2)
+                                 inFlight: 2, currentTokensPerSecond: 52)
         remote.remote = RemoteInfo(name: "vast-box", provider: "vast.ai", host: "box:1", gpu: "H100 SXM",
                                    gpuUtilisation: 1.0, kvCacheUsage: 0.22, queued: 0, promptTokensPerSecond: 9000)
         let sample = Sample(ts: Date().timeIntervalSince1970, gauges: [], models: [remote],
@@ -122,16 +122,30 @@ final class RemoteTests: XCTestCase {
         var local = LoadedModel(runtime: "lmstudio", identifier: "a", displayName: "Local", sizeBytes: 10 << 30,
                                 quantisation: nil, parameters: nil, architecture: nil, kind: nil,
                                 contextLength: nil, maxContextLength: nil, activity: .generating, timeToLive: nil)
-        local.tokensPerSecond = 14
+        local.currentTokensPerSecond = 14
+        local.measuredAt = 0
         var remote = LoadedModel(runtime: "vllm@box", identifier: "b", displayName: "Box", sizeBytes: 0,
                                  quantisation: nil, parameters: nil, architecture: nil, kind: nil,
                                  contextLength: nil, maxContextLength: nil, activity: .generating, timeToLive: nil)
-        remote.tokensPerSecond = 77
+        remote.currentTokensPerSecond = 77
+        remote.measuredAt = 0
         remote.remote = RemoteInfo(name: "box", provider: "vast.ai", host: "box:1")
         let memory = Sample.MemorySnapshot(total: 1, available: 1, wired: 0, compressed: 0, swapUsed: 0, swapTotal: 0, swapoutRate: 0)
         let sample = Sample(ts: 0, gauges: [], models: [local, remote], memory: memory, gpuUtilisation: 0,
                             gpuResidentBytes: 0, pressure: 1, runtimesSeen: [])
         XCTAssertEqual(sample.working?.identifier, "b")
+    }
+
+    func testTokenCountersReturnZeroForIdleAndNilForReset() {
+        let runtime = RemoteVLLM(load: { [] })
+        let start = Date(timeIntervalSince1970: 100)
+        XCTAssertNil(runtime.throughput(key: "box/model", now: start, generated: 10, prompt: 20))
+        XCTAssertEqual(runtime.throughput(key: "box/model", now: start.addingTimeInterval(1),
+                                          generated: 50, prompt: 20)?.rate, 40)
+        XCTAssertEqual(runtime.throughput(key: "box/model", now: start.addingTimeInterval(2),
+                                          generated: 50, prompt: 20)?.rate, 0)
+        XCTAssertNil(runtime.throughput(key: "box/model", now: start.addingTimeInterval(3),
+                                        generated: 0, prompt: 0))
     }
 
     func testThrashingBoxMakesTheVerdictCritical() {

@@ -69,7 +69,7 @@ final class LMStudioStream {
     /// A cached rate older than this is not worth showing.
     private static let cacheLifetime: TimeInterval = 10 * 60
     /// In-flight state from the cache is only trusted while the writer is clearly alive.
-    private static let inFlightLifetime: TimeInterval = 120
+    private static let inFlightLifetime: TimeInterval = 3
     private static let relaunchDelay: TimeInterval = 15
 
     /// Whether this instance will run the stream itself, or only read the cache.
@@ -132,8 +132,12 @@ final class LMStudioStream {
             let live = starts.filter { now - $0 <= Self.longestPrediction }
             current.started[id] = live.isEmpty ? nil : live
         }
-        if process?.isRunning != true, now - current.ts > Self.inFlightLifetime {
+        if live && process?.isRunning != true || !live && now - current.ts > Self.inFlightLifetime {
             current.started = [:]
+        }
+        if live && process?.isRunning == true {
+            state.ts = now
+            saveCache()
         }
         return current
     }
@@ -236,6 +240,7 @@ final class LMStudioStream {
     func clearInFlight(_ id: String) {
         lock.lock()
         state.started[id] = nil
+        saveCache()
         lock.unlock()
     }
 
@@ -244,6 +249,7 @@ final class LMStudioStream {
               let cached = try? JSONDecoder().decode(State.self, from: data),
               Date().timeIntervalSince1970 - cached.ts <= Self.cacheLifetime else { return }
         state.latest = cached.latest
+        state.finished = cached.finished
         state.ts = cached.ts
         // A live process learns what is in flight from its own stream. Only a one-shot
         // command, which has no stream, takes the writer's word for it.

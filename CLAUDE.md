@@ -17,5 +17,6 @@ The menu bar title and the menu can be read without clicking:
     osascript -e 'tell application "System Events" to tell process "Resident" \
       to get title of every menu item of menu 1 of menu bar item 1 of menu bar 1'
 
-Throughput needs a prediction to have completed since the app started, so drive one
-through the runtime's API and read the title again.
+Drive a prediction through the runtime API and verify the title changes to generating
+and back to idle. LM Studio reports only completed-prediction rates, shown as history
+in model submenus, never as live throughput.

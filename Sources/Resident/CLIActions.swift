@@ -4,12 +4,12 @@ extension CLI {
     // MARK: - Unload
 
     static func unload(identifier: String?, idleOnly: Bool) {
-        let runtimes: [ModelRuntime] = [LMStudio(), Ollama(), LlamaServer(), UnmanagedRuntime(), RemoteVLLM()]
+        let runtimes: [ModelRuntime] = [LMStudio(), Ollama(), LlamaServer(), OMLX(), UnmanagedRuntime(), RemoteVLLM()]
         let present = runtimes.filter { $0.isPresent() }
         let loaded = present.flatMap { runtime in runtime.loadedModels().map { (runtime, $0) } }
 
         let targets = loaded.filter { _, model in
-            if idleOnly { return model.activity != .generating }
+            if idleOnly { return model.activity == .idle }
             guard let identifier else { return false }
             return model.identifier == identifier || model.displayName == identifier
         }

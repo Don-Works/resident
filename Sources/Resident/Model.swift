@@ -3,13 +3,14 @@ import Foundation
 /// One model currently occupying memory, however it got there.
 struct LoadedModel: Codable, Sendable, Equatable {
     enum Activity: String, Codable, Sendable {
-        case generating, idle, loaded
+        case generating, loading, idle, loaded
 
         var label: String {
             switch self {
             case .generating: return "generating"
+            case .loading: return "loading"
             case .idle: return "idle"
-            case .loaded: return "loaded"
+            case .loaded: return "unknown"
             }
         }
     }
@@ -49,6 +50,16 @@ struct LoadedModel: Codable, Sendable, Equatable {
     /// Set when the model is served by a box elsewhere. Its weights are in that box's
     /// VRAM, so it takes no part in this machine's memory arithmetic.
     var remote: RemoteInfo? = nil
+    /// Token rate measured over the current sampling interval, never a completed prediction.
+    var currentTokensPerSecond: Double? = nil
+    /// Runtime-wide in-flight count when the server cannot attribute activity to a model.
+    var runtimeInFlight: Int? = nil
+
+    func currentRate(at timestamp: Double) -> Double? {
+        guard let rate = currentTokensPerSecond, rate.isFinite, rate >= 0,
+              let measuredAt, timestamp - measuredAt >= -1, timestamp - measuredAt <= 3 else { return nil }
+        return rate
+    }
 
     var isRemote: Bool { remote != nil }
 
@@ -111,7 +122,7 @@ extension Array where Element == LoadedModel {
     var totalBytes: Int { local.reduce(0) { $0 + $1.sizeBytes } }
 
     /// Models holding memory while doing nothing. These are the reclaim candidates.
-    var idleModels: [LoadedModel] { local.filter { $0.activity != .generating } }
+    var idleModels: [LoadedModel] { local.filter { $0.activity == .idle } }
 
     /// Deterministic order: busiest first, then largest, so the menu does not reshuffle
     /// under the pointer while a sample lands.

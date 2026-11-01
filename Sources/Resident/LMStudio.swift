@@ -34,7 +34,7 @@ final class LMStudio: ModelRuntime {
         let activity = stream.snapshot()
         let streaming = stream.isConnected
         // While the stream is open it is the authority on what is generating: it sees
-        // every start and finish, and `lms ps` is polled once a minute. The exception
+        // every start and finish, and `lms ps` is polled in the background. The exception
         // is a prediction already running when the stream connected — no start event,
         // and only `lms ps` knows. Believe it when it was asked after the last finish
         // the stream saw on that model.
@@ -46,6 +46,7 @@ final class LMStudio: ModelRuntime {
             let reading = activity.latest[id]
             var inFlight = activity.inFlight(id)
             if inFlight == 0, detail?.activity == .generating,
+               Date().timeIntervalSince1970 - polled <= 3,
                polled > (activity.finished[id] ?? 0) {
                 inFlight = 1
             }
@@ -62,7 +63,7 @@ final class LMStudio: ModelRuntime {
                 contextLength: entry["loaded_context_length"] as? Int,
                 maxContextLength: entry["max_context_length"] as? Int,
                 activity: inFlight > 0 ? .generating
-                    : (streaming ? .idle : (detail?.activity ?? .loaded)),
+                    : (streaming && polled > 0 ? .idle : (detail?.activity ?? .loaded)),
                 timeToLive: detail?.timeToLive,
                 tokensPerSecond: reading?.tokensPerSecond,
                 measuredAt: reading?.at,
@@ -85,7 +86,7 @@ final class LMStudio: ModelRuntime {
     private func reconcile(_ activity: LMStudioStream.State) {
         guard let polled = enrichment.refreshedAt?.timeIntervalSince1970 else { return }
         for (id, starts) in activity.started {
-            guard let oldest = starts.min(), polled > oldest + 30,
+            guard let oldest = starts.min(), polled > oldest,
                   enrichment.detail(for: id)?.activity == .idle else { continue }
             stream.clearInFlight(id)
         }
@@ -186,7 +187,7 @@ private final class Enrichment {
     private var refreshing = false
     private var loadedFromDisk = false
     private let lock = NSLock()
-    private let interval: TimeInterval = 60
+    private let interval: TimeInterval = 2
     /// Beyond this the cached activity is too old to be worth showing.
     private let cacheLifetime: TimeInterval = 300
 
@@ -202,7 +203,11 @@ private final class Enrichment {
         lock.lock()
         defer { lock.unlock() }
         if !loadedFromDisk { loadedFromDisk = true; loadCache() }
-        return details[id]
+        guard var detail = details[id] else { return nil }
+        if lastSuccess.map({ Date().timeIntervalSince($0) > 3 }) ?? true {
+            detail.activity = .loaded
+        }
+        return detail
     }
 
     /// When `lms ps` last answered, so a caller can tell whether its word postdates
@@ -210,6 +215,7 @@ private final class Enrichment {
     var refreshedAt: Date? {
         lock.lock()
         defer { lock.unlock() }
+        guard let lastSuccess, Date().timeIntervalSince(lastSuccess) <= 3 else { return nil }
         return lastSuccess
     }
     private var lastSuccess: Date?
@@ -230,10 +236,10 @@ private final class Enrichment {
         lastSuccess = asked
         loadedFromDisk = true
         lock.unlock()
-        saveCache(parsed)
+        saveCache(parsed, at: asked)
     }
 
-    /// Refreshes when a minute has passed or the set of loaded models changed — a load
+    /// Refreshes when two seconds have passed or the set of loaded models changed — a load
     /// or unload is exactly when stale activity data would be most wrong.
     func refreshIfNeeded(identifiers: [String]) {
         lock.lock()
@@ -255,7 +261,7 @@ private final class Enrichment {
             lastRefresh = Date()
             refreshing = false
             lock.unlock()
-            if let parsed { saveCache(parsed) }
+            if let parsed { saveCache(parsed, at: asked) }
         }
     }
 
@@ -264,10 +270,11 @@ private final class Enrichment {
               let cache = try? JSONDecoder().decode(Cache.self, from: data),
               Date().timeIntervalSince1970 - cache.ts <= cacheLifetime else { return }
         details = cache.details
+        lastSuccess = Date(timeIntervalSince1970: cache.ts)
     }
 
-    private func saveCache(_ details: [String: Detail]) {
-        let cache = Cache(ts: Date().timeIntervalSince1970, details: details)
+    private func saveCache(_ details: [String: Detail], at: Date) {
+        let cache = Cache(ts: at.timeIntervalSince1970, details: details)
         guard let data = try? JSONEncoder().encode(cache) else { return }
         try? data.write(to: URL(fileURLWithPath: Self.cachePath), options: .atomic)
     }

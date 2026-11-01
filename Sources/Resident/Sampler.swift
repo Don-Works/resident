@@ -18,7 +18,7 @@ final class Sampler {
     /// modes ask for it.
     init(runtimes: [ModelRuntime]? = nil, detailed: Bool = false, live: Bool = false) {
         self.runtimes = runtimes
-            ?? [LMStudio(live: live), Ollama(), LlamaServer(), UnmanagedRuntime(), RemoteVLLM()]
+            ?? [LMStudio(live: live), Ollama(), LlamaServer(), OMLX(), UnmanagedRuntime(), RemoteVLLM()]
         self.detailed = detailed
     }
 
@@ -123,8 +123,7 @@ final class Sampler {
             note: models.isEmpty
                 ? "no models loaded — this is the window server and other GPU clients"
                 : (overhead > 256 << 20
-                    ? "\(Format.bytes(overhead)) of this is KV cache and runtime "
-                        + "overhead, not weights"
+                    ? "includes KV caches, runtime overhead and other GPU clients"
                     : nil)
         )
     }
@@ -141,7 +140,7 @@ final class Sampler {
             limit: Double(hardware.workingSetLimit),
             unit: .bytes,
             note: approximate
-                ? "includes a process-memory estimate for a runtime with no model API"
+                ? "includes runtime memory estimates, rather than exact weight sizes"
                 : nil
         )
     }

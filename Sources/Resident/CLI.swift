@@ -11,7 +11,7 @@ enum CLI {
       resident watch [seconds]      repeat the report until interrupted
       resident models [--json]      list resident models and their decode ceilings
       resident unload <id>          ask the owning runtime to release a model
-      resident unload --idle        release every model that is not generating
+      resident unload --idle        release models the runtime reports as idle
       resident version
 
     --detail waits for the slow per-model activity that only `lms ps` reports. Without
@@ -63,6 +63,8 @@ enum CLI {
         let verdict = Verdict.evaluate(sample: sample)
         var lines: [String] = []
 
+        lines.append("Sampled \(sample.date.formatted())")
+        lines.append(StatusTitle.render(sample: sample, verdict: verdict).text)
         lines.append("\(marker(verdict.level))  \(verdict.headline)")
         for line in verdict.summary { lines.append("        \(line)") }
         for warning in verdict.warnings { lines.append("        ⚠︎ \(warning)") }
@@ -93,7 +95,7 @@ enum CLI {
     /// machine's memory and their decode is not bounded by its bus.
     static func remoteTable(_ remotes: [LoadedModel]) -> String {
         var lines = [Format.pad("REMOTE MODEL", 26) + Format.pad("PROVIDER · GPU", 26)
-            + Format.pad("STATE", 12) + Format.pad("TOK/S", 9, right: true)
+            + Format.pad("STATE", 12) + Format.pad("NOW TOK/S", 12, right: true)
             + Format.pad("PREFILL", 12, right: true) + Format.pad("REQ", 7, right: true)
             + Format.pad("KV", 6, right: true) + Format.pad("GPU", 6, right: true) + "  CONTEXT"]
         for model in remotes {
@@ -102,7 +104,7 @@ enum CLI {
             let requests = "\(model.inFlight)" + (info.queued > 0 ? "+\(info.queued)" : "")
             lines.append(Format.pad(model.displayName, 26) + Format.pad(where_, 26)
                 + Format.pad(model.activity.label, 12)
-                + Format.pad(model.tokensPerSecond.map { Format.tokens($0) } ?? "—", 9, right: true)
+                + Format.pad(model.currentTokensPerSecond.map { Format.tokens($0) } ?? "—", 12, right: true)
                 + Format.pad(info.promptTokensPerSecond.map { Format.tokens($0) } ?? "—", 12, right: true)
                 + Format.pad(requests, 7, right: true)
                 + Format.pad(info.kvCacheUsage.map { Format.percent($0) } ?? "—", 6, right: true)
@@ -120,27 +122,26 @@ enum CLI {
     static func modelTable(_ models: [LoadedModel], peak: Double?) -> String {
         var lines = [Format.pad("MODEL", 34) + Format.pad("SIZE", 11, right: true) + "  "
             + Format.pad("QUANT", 8) + Format.pad("STATE", 12)
-            + Format.pad("TOK/S", 9, right: true)
+            + Format.pad("NOW TOK/S", 12, right: true)
             + Format.pad("CEILING", 11, right: true) + "  CONTEXT"]
 
         for model in models {
             let ceiling = model.decodeCeiling(peakBandwidth: peak)
                 .map { Format.tokens($0) } ?? "—"
-            let measured = model.tokensPerSecond.map { Format.tokens($0) } ?? "—"
+            let measured = model.currentTokensPerSecond.map { Format.tokens($0) } ?? "—"
             let size = Format.bytes(model.sizeBytes) + (model.sizeIsApproximate ? "~" : "")
             let context = model.contextLength.map { Format.contextLength($0) } ?? "—"
             lines.append(Format.pad(model.displayName, 34)
                 + Format.pad(size, 11, right: true) + "  "
                 + Format.pad(model.quantisation ?? "—", 8)
                 + Format.pad(model.activity.label, 12)
-                + Format.pad(measured, 9, right: true)
+                + Format.pad(measured, 12, right: true)
                 + Format.pad(ceiling, 11, right: true) + "  " + context)
         }
 
         if models.contains(where: { $0.decodeCeiling(peakBandwidth: peak) != nil }) {
             lines.append("")
-            lines.append("TOK/S is the rate the runtime reported for the last prediction it "
-                + "completed on that model.")
+            lines.append("NOW TOK/S is the current sampling interval; — means the runtime offers no live token counter.")
             lines.append("CEILING is decode speed if memory bandwidth were the only limit: "
                 + "bus ÷ weight bytes.")
             lines.append("Real throughput lands below it. A mixture-of-experts model reads "

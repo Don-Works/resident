@@ -19,14 +19,21 @@ enum MenuBuilder {
                 .foregroundColor: colour(for: verdict.level),
             ]
         )
+        title.identifier = NSUserInterfaceItemIdentifier("verdict")
         title.isEnabled = false
         menu.addItem(title)
 
         // These lines are the whole point of the menu, so they are set in full label
         // colour rather than the faint style used for asides.
-        for line in verdict.summary { menu.addItem(detail("        \(line)")) }
-        for warning in verdict.warnings {
-            menu.addItem(detail("        ⚠︎ \(warning)", weight: .medium))
+        for (index, line) in verdict.summary.enumerated() {
+            let item = detail("        \(line)")
+            item.identifier = NSUserInterfaceItemIdentifier("summary-\(index)")
+            menu.addItem(item)
+        }
+        for (index, warning) in verdict.warnings.enumerated() {
+            let item = detail("        ⚠︎ \(warning)", weight: .medium)
+            item.identifier = NSUserInterfaceItemIdentifier("warning-\(index)")
+            menu.addItem(item)
         }
     }
 
@@ -48,10 +55,15 @@ enum MenuBuilder {
                     .foregroundColor: colour(for: level, gauge: gauge),
                 ]
             )
+            item.identifier = NSUserInterfaceItemIdentifier("gauge-\(gauge.key)")
             item.isEnabled = false
             menu.addItem(item)
 
-            if let note = gauge.note { menu.addItem(caption("        \(note)")) }
+            if let note = gauge.note {
+                let item = caption("        \(note)")
+                item.identifier = NSUserInterfaceItemIdentifier("note-\(gauge.key)")
+                menu.addItem(item)
+            }
         }
     }
 
@@ -70,23 +82,24 @@ enum MenuBuilder {
         }
 
         for model in local {
-            let measured = model.tokensPerSecond.map { Format.tokens($0) } ?? ""
+            let measured = model.currentRate(at: sample.ts).map { Format.tokens($0) } ?? ""
             let size = Format.bytes(model.sizeBytes) + (model.sizeIsApproximate ? "~" : "")
             let line = "\(activityMark(model))  \(Format.pad(size, 10, right: true))  "
                 + "\(Format.pad(model.displayName, 26))\(Format.pad(model.quantisation ?? "", 9))"
+                + "\(Format.pad(model.activity.label, 12))"
                 + "\(Format.pad(measured, 10, right: true))"
 
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = NSAttributedString(
                 string: line,
                 attributes: [.font: model.activity == .generating ? monoBold : mono])
+            item.identifier = NSUserInterfaceItemIdentifier("model-\(model.runtime)-\(model.identifier)")
             item.submenu = submenu(for: model, target: target, unload: unload)
             menu.addItem(item)
         }
 
         if !local.isEmpty {
-            menu.addItem(caption("        ▶ generating · tok/s is the runtime's figure for its "
-                + "last prediction"))
+            menu.addItem(caption("        tok/s: current interval only · past predictions in each model’s submenu"))
         }
 
         buildRemotes(into: menu, remotes: sample.models.remotes)
@@ -101,11 +114,11 @@ enum MenuBuilder {
         for model in remotes {
             let info = model.remote!
             let where_ = [info.provider, info.gpu].compactMap { $0 }.joined(separator: " · ")
-            let rate = model.tokensPerSecond.map { Format.tokens($0) } ?? ""
+            let rate = model.currentTokensPerSecond.map { Format.tokens($0) } ?? ""
             let flight = model.inFlight > 0 || info.queued > 0
                 ? "\(model.inFlight)" + (info.queued > 0 ? "+\(info.queued)" : "") + " req" : ""
             let each = model.inFlight > 1
-                ? model.tokensPerSecond.map { Format.tokens($0 / Double(model.inFlight)) + " ea" } ?? "" : ""
+                ? model.currentTokensPerSecond.map { Format.tokens($0 / Double(model.inFlight)) + " ea" } ?? "" : ""
             let kv = info.kvCacheUsage.map { "kv " + Format.percent($0) } ?? ""
             let busy = info.gpuUtilisation.map { "gpu " + Format.percent($0) } ?? ""
             let line = "\(activityMark(model))  ☁ \(Format.pad(where_, 22))"
@@ -118,6 +131,7 @@ enum MenuBuilder {
             item.attributedTitle = NSAttributedString(
                 string: line,
                 attributes: [.font: model.activity == .generating ? monoBold : mono])
+            item.identifier = NSUserInterfaceItemIdentifier("model-\(model.runtime)-\(model.identifier)")
             item.submenu = remoteSubmenu(for: model)
             menu.addItem(item)
         }
@@ -186,7 +200,7 @@ enum MenuBuilder {
             submenu.addItem(caption("unloads itself after \(Format.duration(ttl)) idle"))
         }
         if model.sizeIsApproximate {
-            submenu.addItem(caption("size is process memory, not weight bytes"))
+            submenu.addItem(caption("size includes runtime overhead or estimates"))
         }
 
         submenu.addItem(.separator())
@@ -226,6 +240,7 @@ enum MenuBuilder {
     private static func activityMark(_ model: LoadedModel) -> String {
         switch model.activity {
         case .generating: return "▶"
+        case .loading: return "…"
         case .idle: return "·"
         case .loaded: return " "
         }

@@ -86,24 +86,25 @@ task run
 
 ## Using it
 
-The menu bar item shows how much memory the loaded models are holding and whether the
-GPU is actually working:
+The menu bar follows current activity and GPU use, sampled every second:
 
 ```
-▣ 28G  gpu 44%
+idle · 4 loaded · gpu 8%
+local · Qwen3.8 27B · 8bit · generating · gpu 91%
 ```
 
-While a model is working it also shows which one, and the decode rate its runtime
-reported, in five fixed fields — provider, model, quant, tok/s, gpu:
+Finishing a request clears its activity on the next sample. A historical token rate
+never selects the title. Runtimes with live token counters also show the current
+interval's rate; LM Studio's completed-prediction speeds stay in the model submenu.
+The tooltip and menu show the update time. If sampling stalls for more than three
+seconds the title says `stale`. Unknown activity is labelled explicitly and is not
+counted as idle or reclaimable. GPU use is the whole device, including other apps.
 
-```
-local · Qwen3.8 27B · Q4_K_M · 15 tok/s · gpu 91%
-```
-
-The name and rate stay for half a minute after the last prediction finishes, so an
-agent issuing a request every few seconds reads as one continuous job rather than a
-flicker. A field with no reading is left out. The icon appears only from warn upwards;
-with room to spare the bar carries the title alone.
+Resident also reads oMLX on `127.0.0.1:8001`, using `/api/status` and
+`/v1/models/status`. Loaded models and loading states are shown individually. Its
+public API reports a runtime-wide in-flight count; Resident names the runtime when
+busy without inventing per-model attribution or treating average historical speed
+as live throughput. This integration is read-only.
 
 Open the menu for the verdict, the ceilings, and a row per model. Each model row is a
 submenu carrying its quantisation, context window, idle timeout, last measured rate,
@@ -116,14 +117,13 @@ resident status              # one-shot report
 resident status --detail     # wait for exact per-model activity
 resident watch 2             # refresh every 2 seconds
 resident models --json       # machine-readable
-resident unload --idle       # release everything that is not generating
+resident unload --idle       # release models explicitly reported as idle
 ```
 
 ### Releasing idle models
 
 A model sitting idle with a ten-hour TTL is holding memory you cannot use. **Release
-… of Idle Models** asks each runtime to unload every model that is not currently
-generating. They reload on their next request — the cost is the load time, not the work.
+… of Idle Models** asks each runtime to unload models explicitly reported as idle. They reload on their next request — the cost is the load time, not the work.
 
 Resident never unloads anything on its own, and never stops a process it does not manage.
 
@@ -131,8 +131,8 @@ Resident never unloads anything on its own, and never stops a process it does no
 
 ## Live throughput
 
-The `tok/s` figure next to a model is a measurement from the runtime's own statistics
-for a prediction it completed. Resident does not time requests itself.
+The `tok/s` figure in the live display comes only from current interval counters.
+Past prediction rates are labelled separately in model submenus.
 
 It is the *generation* rate: tokens produced over the time spent producing them. LM
 Studio's headline `tokensPerSecond` divides by the whole request instead, prompt
@@ -148,6 +148,7 @@ each reports roughly half; a single request gets the whole bus.
 |---|---|---|
 | LM Studio | `lms log stream --source model --stats` | generation rate of the last completed prediction on that model, prompt processing excluded |
 | llama.cpp | `/metrics` → `llamacpp:tokens_predicted_total`, as a rate | average over the last sample interval |
+| oMLX | `/api/status`, `/v1/models/status` | current loaded/loading states and runtime-wide request count; no live token rate |
 | Ollama | — | not reported by Ollama's API |
 | process scan | — | no API to ask |
 
@@ -362,15 +363,13 @@ provisioner can do the same with a JSON write.
 
 ### The status item names its source
 
-The model with the highest rate on record takes the menu bar title, alone, in five
-fixed fields — provider, model, quant, tok/s, gpu: `local · Qwen3.8 27B · Q4_K_M · 14
-tok/s · gpu 54%` for a local model, `vast.ai · qwen3.8-27b · fp8 · 39 tok/s ×2 · gpu
-100%` for a box, where the rate is each request's share of the box's total, `×2` is how
-many share it, and `gpu` is the box's card, never this Mac's. A rate outlives the request
-that produced it, so the title does not swap as requests start and stop. A field with
-no reading is left out, nothing is a glyph, and a thrashing box says so in a word. The
-tooltip spells out what every figure is, where it was read, and what the other machine
-is doing.
+The title names a model only while a request is running or that model is loading.
+Idle models never retain a historical speed in the title. Provider, model, quant,
+activity, current interval rate (when available), and GPU use retain a fixed order.
+A remote rate is shared across its in-flight requests; its GPU figure comes from the
+box's card. For local inference the GPU figure is this Mac's whole GPU. Unknown
+activity, unavailable live rates and stale samples are stated explicitly.
+The tooltip spells out each measurement's source and update time.
 
 ### The thrash alert
 

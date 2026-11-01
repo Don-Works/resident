@@ -76,9 +76,8 @@ struct Verdict {
         // that gap can exceed the model itself.
         let overhead = sample.gpuResidentBytes - models.totalBytes
         if !models.isEmpty, overhead > 512 << 20 {
-            lines.append("GPU has \(Format.bytes(sample.gpuResidentBytes)) allocated — "
-                + "\(Format.bytes(overhead)) beyond the weights, which is KV cache and "
-                + "runtime overhead")
+            lines.append("GPU has \(Format.bytes(sample.gpuResidentBytes)) "
+                + "allocated across model runtimes and other GPU clients")
         }
 
         if let measured = throughput(sample: sample) {
@@ -97,10 +96,10 @@ struct Verdict {
             let info = model.remote!
             var head = "☁ \(model.displayName) on \(info.provider)"
             if let gpu = info.gpu { head += " (\(gpu))" }
-            if let rate = model.tokensPerSecond {
+            if let rate = model.currentTokensPerSecond {
                 head += model.activity == .generating
                     ? " is decoding at \(Format.tokens(rate))"
-                    : " last decoded at \(Format.tokens(rate))"
+                    : " is idle; current interval \(Format.tokens(rate))"
             } else {
                 head += model.activity == .generating ? " is generating" : " is serving, idle"
             }
@@ -110,7 +109,7 @@ struct Verdict {
             }
             // The counter rate is the box's total. Several agents share it, so say what
             // each one is getting.
-            if model.inFlight > 1, let rate = model.tokensPerSecond {
+            if model.inFlight > 1, let rate = model.currentTokensPerSecond {
                 facts.append("\(Format.tokens(rate / Double(model.inFlight))) each")
             }
             if let prefill = info.promptTokensPerSecond { facts.append("prefill \(Format.tokens(prefill))") }
@@ -125,10 +124,12 @@ struct Verdict {
     /// model beats the dense arithmetic, and a bound the screen contradicts is worse
     /// than none.
     private static func throughput(sample: Sample) -> String? {
-        guard let model = sample.working, !model.isRemote,
-              let rate = model.tokensPerSecond else { return nil }
-        let verb = model.activity == .generating ? "is decoding" : "last decoded"
-        return "\(model.displayName) \(verb) at \(Format.tokens(rate))"
+        guard let model = sample.working, !model.isRemote else { return nil }
+        if model.activity == .loading { return "\(model.displayName) is loading" }
+        if let rate = model.currentRate(at: sample.ts) {
+            return "\(model.displayName) is generating at \(Format.tokens(rate))"
+        }
+        return "\(model.displayName) is generating — live token rate unavailable"
     }
 
     private static func warnings(sample: Sample, hardware: Hardware, thresholds: Thresholds,

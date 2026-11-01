@@ -16,7 +16,7 @@ final class MenuBarController: NSObject {
     /// Boxes already alerted about, so an episode fires one notification, not one per sample.
     var alertedThrash: Set<String> = []
 
-    var interval: TimeInterval = 5
+    var interval: TimeInterval = 1
 
     func stop() {
         timer?.invalidate()
@@ -41,6 +41,9 @@ final class MenuBarController: NSObject {
 
     /// Sampling talks to model runtimes over HTTP, so it never runs on the main thread.
     private func refresh(then completion: (() -> Void)? = nil) {
+        if let sample {
+            updateStatusItem(sample: sample, verdict: verdict)
+        }
         guard !sampling else { completion?(); return }
         sampling = true
         queue.async { [weak self] in
@@ -53,11 +56,7 @@ final class MenuBarController: NSObject {
                 self.verdict = verdict
                 self.updateStatusItem(sample: sample, verdict: verdict)
                 self.alertIfThrashing(verdict)
-                // Rebuilding under an open highlighted item would move it out from
-                // under the pointer mid-click.
-                if self.menu.highlightedItem == nil {
-                    self.rebuildMenu(sample: sample, verdict: verdict)
-                }
+                self.rebuildMenu(sample: sample, verdict: verdict)
                 completion?()
             }
         }
@@ -129,7 +128,25 @@ final class MenuBarController: NSObject {
     // MARK: - Menu
 
     private func rebuildMenu(sample: Sample, verdict: Verdict) {
-        menu.removeAllItems()
+        let next = NSMenu()
+        let updated = NSMenuItem(title: "Updated \(sample.date.formatted(date: .omitted, time: .standard)) · every \(Format.duration(interval))",
+                                 action: nil, keyEquivalent: "")
+        updated.identifier = NSUserInterfaceItemIdentifier("updated")
+        next.addItem(updated)
+        let activity = NSMenuItem(title: StatusTitle.render(sample: sample, verdict: verdict, interval: interval).text,
+                                  action: nil, keyEquivalent: "")
+        activity.identifier = NSUserInterfaceItemIdentifier("activity")
+        next.addItem(activity)
+        populate(next, sample: sample, verdict: verdict)
+        if menu.highlightedItem == nil {
+            menu.removeAllItems()
+            for item in next.items { next.removeItem(item); menu.addItem(item) }
+        } else {
+            MenuBuilder.updateVisible(menu, from: next)
+        }
+    }
+
+    private func populate(_ menu: NSMenu, sample: Sample, verdict: Verdict) {
         MenuBuilder.buildVerdict(into: menu, verdict: verdict)
         menu.addItem(.separator())
         MenuBuilder.buildGauges(into: menu, sample: sample)

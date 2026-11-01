@@ -9,7 +9,6 @@ final class LlamaServer: ModelRuntime {
     /// The cumulative predicted-token counter from the last sample, per port, so a rate
     /// can be derived. Only the sampling queue touches this.
     private var previous: [Int: (tokens: Int, at: Date)] = [:]
-    private var lastReading: [Int: (rate: Double, at: Date)] = [:]
 
     init(ports: [Int] = [8080, 8000, 8081]) { self.ports = ports }
 
@@ -38,7 +37,8 @@ final class LlamaServer: ModelRuntime {
                 timeToLive: nil,
                 tokensPerSecond: reading?.rate,
                 measuredAt: reading?.at.timeIntervalSince1970,
-                inFlight: busy
+                inFlight: busy,
+                currentTokensPerSecond: reading?.rate
             )
         }
     }
@@ -66,23 +66,21 @@ final class LlamaServer: ModelRuntime {
 
     /// Decode rate over the interval since the last sample, from the server's own
     /// `llamacpp:tokens_predicted_total` counter. The counter is behind `--metrics`;
-    /// without it there is no measurement. When no tokens were produced in the interval
-    /// the previous reading stands, so a finished burst is still reported with its time.
+    /// without it there is no measurement. An idle interval reports zero; an unavailable measurement reports nil.
     private func throughput(port: Int) -> (rate: Double, at: Date)? {
         guard let text = Probe.get("http://localhost:\(port)/metrics", timeout: 0.4)
                 .flatMap({ String(data: $0, encoding: .utf8) }),
               let total = Self.counter("llamacpp:tokens_predicted_total", in: text)
-        else { return lastReading[port] }
+        else { previous[port] = nil; return nil }
 
         let now = Date()
         defer { previous[port] = (total, now) }
-        guard let before = previous[port] else { return lastReading[port] }
+        guard let before = previous[port] else { previous[port] = nil; return nil }
 
         let elapsed = now.timeIntervalSince(before.at)
         let produced = total - before.tokens
-        guard elapsed > 0.5, produced > 0 else { return lastReading[port] }
+        guard elapsed > 0.5, produced >= 0 else { return nil }
         let reading = (rate: Double(produced) / elapsed, at: now)
-        lastReading[port] = reading
         return reading
     }
 

@@ -14,7 +14,6 @@ final class RemoteVLLM: ModelRuntime {
     /// Cumulative counters from the last sample, per remote and model, so rates can be
     /// derived. Only the sampling queue touches these.
     private var previous: [String: (generated: Int, prompt: Int, at: Date)] = [:]
-    private var lastReading: [String: (rate: Double, prefill: Double?, at: Date)] = [:]
     private var previousPreemptions: [String: Int] = [:]
 
     init(load: @escaping () -> [Remote] = { Remotes.load() }) { self.load = load }
@@ -36,7 +35,10 @@ final class RemoteVLLM: ModelRuntime {
         // A box in another country with a 50 KB metrics page needs more than the
         // localhost timeout, and a box that has gone away must not cost more than this.
         guard let data = Probe.get(remote.metrics, timeout: 2.5),
-              let text = String(data: data, encoding: .utf8) else { return [] }
+              let text = String(data: data, encoding: .utf8) else {
+            previous = previous.filter { !$0.key.hasPrefix(remote.host + "/") }
+            return []
+        }
         let metrics = Prometheus.parse(text)
         let gpu = gpuReading(remote)
         let now = Date()
@@ -70,7 +72,7 @@ final class RemoteVLLM: ModelRuntime {
                 kind: nil,
                 contextLength: remote.contextLength,
                 maxContextLength: nil,
-                activity: running > 0 ? .generating : .loaded,
+                activity: running > 0 ? .generating : .idle,
                 timeToLive: nil,
                 tokensPerSecond: reading?.rate,
                 measuredAt: reading?.at.timeIntervalSince1970,
@@ -91,7 +93,8 @@ final class RemoteVLLM: ModelRuntime {
                     waitingForCapacity: capacityWaits,
                     preemptions: preemptions,
                     thrashing: thrashing
-                )
+                ),
+                currentTokensPerSecond: reading?.rate
             )
         }
     }
@@ -107,21 +110,19 @@ final class RemoteVLLM: ModelRuntime {
     }
 
     /// Decode and prefill rates over the interval since the last sample, from the
-    /// server's own cumulative counters. When nothing was generated in the interval the
-    /// previous reading stands, so a finished burst is still reported with its time.
-    private func throughput(key: String, now: Date, generated: Int,
+    /// server's own cumulative counters. An idle interval reports zero; an unavailable measurement reports nil.
+    func throughput(key: String, now: Date, generated: Int,
                             prompt: Int) -> (rate: Double, prefill: Double?, at: Date)? {
         defer { previous[key] = (generated, prompt, now) }
-        guard let before = previous[key] else { return lastReading[key] }
+        guard let before = previous[key] else { return nil }
 
         let elapsed = now.timeIntervalSince(before.at)
         let produced = generated - before.generated
-        guard elapsed > 0.5, produced > 0 else { return lastReading[key] }
+        guard elapsed > 0.5, produced >= 0 else { return nil }
         let consumed = prompt - before.prompt
         let reading = (rate: Double(produced) / elapsed,
                        prefill: consumed > 0 ? Double(consumed) / elapsed : nil,
                        at: now)
-        lastReading[key] = reading
         return reading
     }
 
