@@ -13,6 +13,7 @@ final class MenuBarController: NSObject {
     private var sample: Sample?
     private var verdict = Verdict()
     private var sampling = false
+    private var menuIsOpen = false
     /// Boxes already alerted about, so an episode fires one notification, not one per sample.
     var alertedThrash: Set<String> = []
 
@@ -138,7 +139,7 @@ final class MenuBarController: NSObject {
         activity.identifier = NSUserInterfaceItemIdentifier("activity")
         next.addItem(activity)
         populate(next, sample: sample, verdict: verdict)
-        if menu.highlightedItem == nil {
+        if !menuIsOpen {
             menu.removeAllItems()
             for item in next.items { next.removeItem(item); menu.addItem(item) }
         } else {
@@ -228,9 +229,12 @@ final class MenuBarController: NSObject {
 }
 
 extension MenuBarController: NSMenuDelegate {
+    func menuDidClose(_ menu: NSMenu) { menuIsOpen = false }
+
     /// Show the last sample immediately so the menu is never blank, then refresh into it.
     func menuWillOpen(_ menu: NSMenu) {
         if let sample { rebuildMenu(sample: sample, verdict: verdict) }
+        menuIsOpen = true
         refresh()
     }
 }

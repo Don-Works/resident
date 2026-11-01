@@ -24,6 +24,12 @@ extension MenuBuilder {
                 }
             }
         }
+        let currentModels = Set(menu.items.compactMap { $0.identifier?.rawValue }.filter { $0.hasPrefix("model-") })
+        let nextModels = Set(next.items.compactMap { $0.identifier?.rawValue }.filter { $0.hasPrefix("model-") })
+        if currentModels != nextModels,
+           let updated = menu.items.first(where: { $0.identifier?.rawValue == "updated" }) {
+            updated.title += " · model list changed; reopen to refresh"
+        }
     }
 
 }
