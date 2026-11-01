@@ -187,7 +187,7 @@ private final class Enrichment {
     private var refreshing = false
     private var loadedFromDisk = false
     private let lock = NSLock()
-    private let interval: TimeInterval = 2
+    private let interval: TimeInterval = 1
     /// Beyond this the cached activity is too old to be worth showing.
     private let cacheLifetime: TimeInterval = 300
 
@@ -239,7 +239,7 @@ private final class Enrichment {
         saveCache(parsed, at: asked)
     }
 
-    /// Refreshes when two seconds have passed or the set of loaded models changed — a load
+    /// Refreshes when one second has passed or the set of loaded models changed — a load
     /// or unload is exactly when stale activity data would be most wrong.
     func refreshIfNeeded(identifiers: [String]) {
         lock.lock()
