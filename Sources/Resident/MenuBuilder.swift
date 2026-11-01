@@ -20,7 +20,7 @@ enum MenuBuilder {
             ]
         )
         title.identifier = NSUserInterfaceItemIdentifier("verdict")
-        title.isEnabled = false
+        title.isEnabled = true
         menu.addItem(title)
 
         // These lines are the whole point of the menu, so they are set in full label
@@ -56,7 +56,7 @@ enum MenuBuilder {
                 ]
             )
             item.identifier = NSUserInterfaceItemIdentifier("gauge-\(gauge.key)")
-            item.isEnabled = false
+            item.isEnabled = true
             menu.addItem(item)
 
             if let note = gauge.note {
@@ -275,7 +275,7 @@ enum MenuBuilder {
                 .foregroundColor: NSColor.secondaryLabelColor,
             ]
         )
-        item.isEnabled = false
+        item.isEnabled = true
         return item
     }
 
@@ -290,7 +290,7 @@ enum MenuBuilder {
                 .foregroundColor: NSColor.labelColor,
             ]
         )
-        item.isEnabled = false
+        item.isEnabled = true
         return item
     }
 
@@ -305,7 +305,7 @@ enum MenuBuilder {
                 .foregroundColor: NSColor.secondaryLabelColor,
             ]
         )
-        item.isEnabled = false
+        item.isEnabled = true
         return item
     }
 }
