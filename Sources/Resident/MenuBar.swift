@@ -234,9 +234,11 @@ extension MenuBarController: NSMenuDelegate {
         if let sample { updateStatusItem(sample: sample, verdict: verdict) }
     }
 
-    /// Show the last sample immediately so the menu is never blank, then refresh into it.
-    func menuWillOpen(_ menu: NSMenu) {
+    func menuNeedsUpdate(_ menu: NSMenu) {
         if let sample { rebuildMenu(sample: sample, verdict: verdict) }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
         menuIsOpen = true
         refresh()
     }
