@@ -79,7 +79,7 @@ final class MenuBarController: NSObject {
     /// orange opts out of that and becomes unreadable on a light bar. Severity is
     /// otherwise carried by the text weight.
     private func updateStatusItem(sample: Sample, verdict: Verdict) {
-        guard let button = statusItem.button else { return }
+        guard !menuIsOpen, let button = statusItem.button else { return }
         let icon = Self.icon(for: verdict.level, thrashing: !verdict.thrashing.isEmpty)
         button.image = icon
         button.imagePosition = .imageLeading
@@ -229,7 +229,10 @@ final class MenuBarController: NSObject {
 }
 
 extension MenuBarController: NSMenuDelegate {
-    func menuDidClose(_ menu: NSMenu) { menuIsOpen = false }
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
+        if let sample { updateStatusItem(sample: sample, verdict: verdict) }
+    }
 
     /// Show the last sample immediately so the menu is never blank, then refresh into it.
     func menuWillOpen(_ menu: NSMenu) {
