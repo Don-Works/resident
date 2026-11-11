@@ -159,7 +159,11 @@ final class LMStudioStream {
         let pipe = Pipe()
         process.standardOutput = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            self?.consume(handle.availableData)
+            let data = handle.availableData
+            // End of file fires the handler again on every pass; without this it spins a
+            // core until the termination handler runs, which was seen holding for days.
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
+            self?.consume(data)
         }
         process.terminationHandler = { [weak self] _ in
             pipe.fileHandleForReading.readabilityHandler = nil
