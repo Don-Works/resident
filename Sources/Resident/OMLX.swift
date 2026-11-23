@@ -6,20 +6,20 @@ import Foundation
 final class OMLX: ModelRuntime {
     let name = "oMLX"
     private let ports: [Int]
-    private let discover: Bool
+    private let discovered: ServingPorts?
 
     init(ports: [Int] = [8001], discover: Bool = true) {
         self.ports = ports
-        self.discover = discover
+        discovered = discover ? ServingPorts(matching: Self.isOMLX) : nil
     }
 
     /// oMLX renames its process `omlx-server`; launched another way it still says `omlx serve`.
     static func isOMLX(_ arguments: [String]) -> Bool {
-        if arguments.first.map({ URL(fileURLWithPath: $0).lastPathComponent == "omlx-server" }) == true {
+        if arguments.first.map({ ($0 as NSString).lastPathComponent == "omlx-server" }) == true {
             return true
         }
         return zip(arguments, arguments.dropFirst()).contains {
-            URL(fileURLWithPath: $0.0).lastPathComponent == "omlx" && $0.1 == "serve"
+            ($0.0 as NSString).lastPathComponent == "omlx" && $0.1 == "serve"
         }
     }
 
@@ -34,8 +34,7 @@ final class OMLX: ModelRuntime {
     }
 
     private func liveStatuses() -> [(port: Int, status: [String: Any])] {
-        let discovered = discover ? ProcessList.servingPorts(where: Self.isOMLX) : []
-        return Array(Set(ports + discovered)).sorted().compactMap { port in
+        return Array(Set(ports + (discovered?.current() ?? []))).sorted().compactMap { port in
             guard let status = Probe.json("http://127.0.0.1:\(port)/api/status", timeout: 0.4)
                     as? [String: Any],
                   status["models_loaded"] != nil, status["active_requests"] != nil else { return nil }

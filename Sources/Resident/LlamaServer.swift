@@ -6,7 +6,7 @@ import Foundation
 final class LlamaServer: ModelRuntime {
     let name = "llama.cpp"
     private let ports: [Int]
-    private let discover: Bool
+    private let discovered: ServingPorts?
 
     /// The cumulative predicted-token counter from the last sample, per port, so a rate
     /// can be derived. Only the sampling queue touches this.
@@ -14,11 +14,13 @@ final class LlamaServer: ModelRuntime {
 
     init(ports: [Int] = [8080, 8000, 8081], discover: Bool = true) {
         self.ports = ports
-        self.discover = discover
+        discovered = discover ? ServingPorts(matching: Self.isLlamaServer) : nil
     }
 
+    /// Basenames go through NSString: `URL(fileURLWithPath:)` stats the path, and from the
+    /// app a stat on an external volume waits on a macOS privacy check.
     static func isLlamaServer(_ arguments: [String]) -> Bool {
-        arguments.first.map { URL(fileURLWithPath: $0).lastPathComponent == "llama-server" } ?? false
+        arguments.first.map { ($0 as NSString).lastPathComponent == "llama-server" } ?? false
     }
 
     func isPresent() -> Bool { !liveEndpoints().isEmpty }
@@ -37,7 +39,7 @@ final class LlamaServer: ModelRuntime {
                       reading: (rate: Double, at: Date)?) -> LoadedModel {
         let settings = props["default_generation_settings"] as? [String: Any]
         let path = (props["model_path"] as? String) ?? (settings?["model"] as? String)
-        let identifier = path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "model"
+        let identifier = path.map { ($0 as NSString).lastPathComponent } ?? "model"
         // `/slots` is behind `--slots`; only a table that answered can say nothing is running.
         let busy = slots?.filter { ($0["is_processing"] as? Bool) == true }.count ?? 0
         let activity: LoadedModel.Activity = busy > 0 ? .generating : (slots == nil ? .loaded : .idle)
@@ -71,8 +73,7 @@ final class LlamaServer: ModelRuntime {
     }
 
     private func liveEndpoints() -> [(port: Int, props: [String: Any])] {
-        let discovered = discover ? ProcessList.servingPorts(where: Self.isLlamaServer) : []
-        return Array(Set(ports + discovered)).sorted().compactMap { port in
+        return Array(Set(ports + (discovered?.current() ?? []))).sorted().compactMap { port in
             guard let props = Probe.json("http://localhost:\(port)/props", timeout: 0.4)
                     as? [String: Any] else { return nil }
             return (port, props)
@@ -120,7 +121,7 @@ final class LlamaServer: ModelRuntime {
     /// GGUF files name their quantisation in the filename, which is the only place a
     /// running llama-server exposes it.
     private static func quantisation(_ path: String) -> String? {
-        let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        let name = ((path as NSString).deletingPathExtension as NSString).lastPathComponent
         let parts = name.split(separator: ".").map(String.init)
         return parts.last.flatMap { $0.uppercased().hasPrefix("Q") || $0.uppercased().hasPrefix("F")
             ? $0.uppercased() : nil }

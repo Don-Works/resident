@@ -73,12 +73,12 @@ final class UnmanagedRuntime: ModelRuntime {
             if let index = arguments.firstIndex(of: flag), index + 1 < arguments.count {
                 let value = arguments[index + 1]
                 if !value.isEmpty && !value.hasPrefix("-") {
-                    return URL(fileURLWithPath: value).lastPathComponent
+                    return (value as NSString).lastPathComponent
                 }
             }
             if let argument = arguments.first(where: { $0.hasPrefix(flag + "=") }) {
                 let value = String(argument.dropFirst(flag.count + 1))
-                if !value.isEmpty { return URL(fileURLWithPath: value).lastPathComponent }
+                if !value.isEmpty { return (value as NSString).lastPathComponent }
             }
         }
         return signature
@@ -133,11 +133,10 @@ enum ProcessList {
 
     /// Ports served by every process whose argument vector satisfies `matches`.
     static func servingPorts(where matches: ([String]) -> Bool) -> [Int] {
-        // Sockets first: few processes listen, and reading arguments costs far more.
+        // Arguments first: one call per process, where sockets cost one call per descriptor.
         Array(Set(all().flatMap { pid -> [Int] in
-            let ports = listeningPorts(of: pid)
-            guard !ports.isEmpty, let arguments = arguments(of: pid), matches(arguments) else { return [] }
-            return ports
+            guard let arguments = arguments(of: pid), matches(arguments) else { return [] }
+            return listeningPorts(of: pid)
         })).sorted()
     }
 
@@ -148,12 +147,12 @@ enum ProcessList {
 
     static func arguments(of pid: pid_t) -> [String]? {
         var size = Int(argumentMax)
-        var buffer = [CChar](repeating: 0, count: size)
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size
-        else { return nil }
-
-        let bytes = buffer.prefix(size).map { UInt8(bitPattern: $0) }
+        // Left uninitialised: the kernel writes only what the process holds, and zeroing
+        // the full limit for each of ~1400 processes cost seconds on the sampling queue.
+        let bytes = [UInt8](unsafeUninitializedCapacity: size) { buffer, count in
+            count = sysctl(&mib, 3, buffer.baseAddress, &size, nil, 0) == 0 ? size : 0
+        }
         return decodeArguments(bytes)
     }
 
@@ -164,9 +163,16 @@ enum ProcessList {
         let body = bytes.dropFirst(MemoryLayout<Int32>.size)
         guard let separator = body.firstIndex(of: 0) else { return nil }
         let argv = body.suffix(from: body.index(after: separator)).drop(while: { $0 == 0 })
-        let parts = argv.split(separator: 0, omittingEmptySubsequences: false).prefix(Int(argc))
+        // Stop at argc: the environment follows and can be far longer than the arguments.
+        var parts: [String] = []
+        var start = argv.startIndex
+        while parts.count < argc, start < argv.endIndex {
+            let end = argv[start...].firstIndex(of: 0) ?? argv.endIndex
+            parts.append(String(decoding: argv[start..<end], as: UTF8.self))
+            start = end < argv.endIndex ? argv.index(after: end) : end
+        }
         guard parts.count == argc else { return nil }
-        return parts.map { String(decoding: $0, as: UTF8.self) }
+        return parts
     }
 
     private static var argumentMax: Int32 = {

@@ -79,3 +79,17 @@ final class UnmanagedRuntimeTests: XCTestCase {
         XCTAssertEqual(UnmanagedRuntime.modelName(arguments: ["python", "-m", "mlx_audio.server"]), "mlx_audio")
     }
 }
+
+final class ServingPortsTests: XCTestCase {
+    func testRescansOnlyAfterTheInterval() {
+        var scans = 0
+        let ports = ServingPorts(interval: 10) { _ in scans += 1; return false }
+        let start = Date()
+        _ = ports.current(now: start)
+        let afterFirst = scans
+        _ = ports.current(now: start.addingTimeInterval(5))
+        XCTAssertEqual(scans, afterFirst, "rescanned inside the interval")
+        _ = ports.current(now: start.addingTimeInterval(11))
+        XCTAssertGreaterThan(scans, afterFirst, "did not rescan after the interval")
+    }
+}
