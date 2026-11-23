@@ -100,7 +100,8 @@ The tooltip and menu show the update time. If sampling stalls for more than thre
 seconds the title says `stale`. Unknown activity is labelled explicitly and is not
 counted as idle or reclaimable. GPU use is the whole device, including other apps.
 
-Resident also reads oMLX on `127.0.0.1:8001`, using `/api/status` and
+Resident also reads oMLX on `127.0.0.1:8001` and on any port an `omlx serve` or
+`omlx-server` process is listening on, using `/api/status` and
 `/v1/models/status`. Loaded models and loading states are shown individually. Its
 public API reports a runtime-wide in-flight count; Resident names the runtime when
 busy without inventing per-model attribution or treating average historical speed
@@ -263,11 +264,12 @@ almost all of it waiting on model-runtime HTTP.
 |---|---|---|---|---|---|
 | LM Studio | `/api/v0/models` | on-disk model index | `lms log stream`, else `lms ps` cached | `lms log stream` | `lms unload` |
 | Ollama | `/api/ps` | `size_vram` | — | — | `keep_alive: 0` |
-| llama.cpp | `/props` on 8080/8000/8081 | GGUF file size | `/slots` | `/metrics` | no — stop the server |
+| llama.cpp | `/props` on 8080/8000/8081 and every port a `llama-server` process listens on | GGUF file size | `/slots` | `/metrics` | no — stop the server |
 | vLLM on a remote box | `remotes.json` → `/metrics` | not this machine's memory | `num_requests_running` | token counters, as a rate | no — stop the box |
-| MLX, vLLM (local), others | process scan | resident process memory | — | — | no |
+| oMLX | `/api/status` on 8001 and every port an oMLX process listens on | `/v1/models/status` | `/api/status` in-flight count | — | no |
+| MLX (`mlx_lm`, `mlx_vlm`, `mlx_audio`, MTPLX), vLLM (local), others | process scan, named from `--model` | physical footprint (Activity Monitor's Memory) | — | — | no |
 
-Anything found by process scan is marked with `~`, because resident process memory
+Anything found by process scan is marked with `~`, because a process's footprint
 includes the KV cache, the framework and the interpreter — not just weights.
 
 LM Studio deserves a note: `lms ps --json` reports everything but takes three to eight

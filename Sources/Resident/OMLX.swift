@@ -1,24 +1,46 @@
 import Foundation
 
 /// oMLX reports loaded models individually, but its public activity count is server-wide.
+/// Every running oMLX server is read, not only the default port: a second instance (a
+/// benchmark, a scratch server) holds memory just the same.
 final class OMLX: ModelRuntime {
-    let name: String
-    private let base: String
+    let name = "oMLX"
+    private let ports: [Int]
+    private let discover: Bool
 
-    init(port: Int = 8001) {
-        name = "oMLX:\(port)"
-        base = "http://127.0.0.1:\(port)"
+    init(ports: [Int] = [8001], discover: Bool = true) {
+        self.ports = ports
+        self.discover = discover
     }
 
-    func isPresent() -> Bool {
-        guard let status = Probe.json(base + "/api/status", timeout: 0.4) as? [String: Any] else { return false }
-        return status["models_loaded"] != nil && status["active_requests"] != nil
+    /// oMLX renames its process `omlx-server`; launched another way it still says `omlx serve`.
+    static func isOMLX(_ arguments: [String]) -> Bool {
+        if arguments.first.map({ URL(fileURLWithPath: $0).lastPathComponent == "omlx-server" }) == true {
+            return true
+        }
+        return zip(arguments, arguments.dropFirst()).contains {
+            URL(fileURLWithPath: $0.0).lastPathComponent == "omlx" && $0.1 == "serve"
+        }
     }
+
+    func isPresent() -> Bool { !liveStatuses().isEmpty }
 
     func loadedModels() -> [LoadedModel] {
-        guard let status = Probe.json(base + "/api/status", timeout: 0.4) as? [String: Any],
-              let models = Probe.json(base + "/v1/models/status", timeout: 0.4) as? [String: Any] else { return [] }
-        return Self.parse(status: status, models: models, runtime: name)
+        liveStatuses().flatMap { port, status -> [LoadedModel] in
+            guard let models = Probe.json("http://127.0.0.1:\(port)/v1/models/status", timeout: 0.4)
+                    as? [String: Any] else { return [] }
+            return Self.parse(status: status, models: models, runtime: "\(name):\(port)")
+        }
+    }
+
+    private func liveStatuses() -> [(port: Int, status: [String: Any])] {
+        let discovered = discover ? ProcessList.servingPorts(where: Self.isOMLX) : []
+        return Array(Set(ports + discovered)).sorted().compactMap { port in
+            guard let status = Probe.json("http://127.0.0.1:\(port)/api/status", timeout: 0.4)
+                    as? [String: Any],
+                  status["models_loaded"] != nil, status["active_requests"] != nil else { return nil }
+            return (port, status)
+        }
     }
 
     static func parse(status: [String: Any], models: [String: Any], runtime: String) -> [LoadedModel] {

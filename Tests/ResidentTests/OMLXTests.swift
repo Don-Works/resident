@@ -34,4 +34,11 @@ final class OMLXTests: XCTestCase {
         let models = OMLX.parse(status: [:], models: rows, runtime: "oMLX:8001")
         XCTAssertTrue(models.idleModels.isEmpty)
     }
+
+    func testRenamedAndPlainOMLXProcessesAreDiscoveredButClientsAreNot() {
+        XCTAssertTrue(OMLX.isOMLX(["omlx-server"]))
+        XCTAssertTrue(OMLX.isOMLX(["/venv/bin/omlx", "serve", "--port", "8011"]))
+        XCTAssertFalse(OMLX.isOMLX(["/bin/zsh", "-c", "omlx serve"]))
+        XCTAssertFalse(OMLX.isOMLX(["curl", "http://127.0.0.1:8001/api/status"]))
+    }
 }
