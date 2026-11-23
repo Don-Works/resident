@@ -43,4 +43,12 @@ final class LlamaServerTests: XCTestCase {
         XCTAssertTrue(LlamaServer.isLlamaServer(["/opt/llama/bin/llama-server", "-m", "x.gguf"]))
         XCTAssertFalse(LlamaServer.isLlamaServer(["/bin/zsh", "-c", "llama-server -m x.gguf"]))
     }
+
+    /// The size comes from the server, never the GGUF file: stat'ing a file on an external
+    /// volume from the menu bar app raises a privacy prompt that blocks sampling.
+    func testWeightSizeComesFromTheServersModelList() {
+        let models: [String: Any] = ["data": [["id": "inkling-2-mini", "meta": ["size": 17_615_963_136]]]]
+        XCTAssertEqual(LlamaServer.weightBytes(models: models), 17_615_963_136)
+        XCTAssertNil(LlamaServer.weightBytes(models: nil))
+    }
 }

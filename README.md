@@ -264,7 +264,7 @@ almost all of it waiting on model-runtime HTTP.
 |---|---|---|---|---|---|
 | LM Studio | `/api/v0/models` | on-disk model index | `lms log stream`, else `lms ps` cached | `lms log stream` | `lms unload` |
 | Ollama | `/api/ps` | `size_vram` | — | — | `keep_alive: 0` |
-| llama.cpp | `/props` on 8080/8000/8081 and every port a `llama-server` process listens on | GGUF file size | `/slots` | `/metrics` | no — stop the server |
+| llama.cpp | `/props` on 8080/8000/8081 and every port a `llama-server` process listens on | `/v1/models` weight size | `/slots` | `/metrics` | no — stop the server |
 | vLLM on a remote box | `remotes.json` → `/metrics` | not this machine's memory | `num_requests_running` | token counters, as a rate | no — stop the box |
 | oMLX | `/api/status` on 8001 and every port an oMLX process listens on | `/v1/models/status` | `/api/status` in-flight count | — | no |
 | MLX (`mlx_lm`, `mlx_vlm`, `mlx_audio`, MTPLX), vLLM (local), others | process scan, named from `--model` | physical footprint (Activity Monitor's Memory) | — | — | no |

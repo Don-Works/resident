@@ -26,7 +26,8 @@ final class LlamaServer: ModelRuntime {
     func loadedModels() -> [LoadedModel] {
         liveEndpoints().map { port, props in
             let slots = Probe.json("http://localhost:\(port)/slots", timeout: 0.4) as? [[String: Any]]
-            let size = (props["model_path"] as? String).flatMap(Self.fileSize) ?? 0
+            let models = Probe.json("http://localhost:\(port)/v1/models", timeout: 0.4) as? [String: Any]
+            let size = Self.weightBytes(models: models) ?? 0
             return Self.model(props: props, slots: slots, port: port, size: size,
                               reading: throughput(port: port))
         }
@@ -109,9 +110,11 @@ final class LlamaServer: ModelRuntime {
         return nil
     }
 
-    private static func fileSize(_ path: String) -> Int? {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-        return (attributes?[.size] as? NSNumber)?.intValue
+    /// Weight bytes as the server reports them. Never stat the GGUF: on an external volume
+    /// that raises a macOS privacy prompt and the sampler blocks until it is answered.
+    static func weightBytes(models: [String: Any]?) -> Int? {
+        let first = (models?["data"] as? [[String: Any]])?.first
+        return (first?["meta"] as? [String: Any])?["size"] as? Int
     }
 
     /// GGUF files name their quantisation in the filename, which is the only place a
