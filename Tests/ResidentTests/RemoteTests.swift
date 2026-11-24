@@ -66,7 +66,7 @@ final class RemoteTests: XCTestCase {
     func testRemoteModelsStayOutOfMemoryArithmetic() {
         let local = LoadedModel(runtime: "lmstudio", identifier: "a", displayName: "A", sizeBytes: 10 << 30,
                                 quantisation: nil, parameters: nil, architecture: nil, kind: nil,
-                                contextLength: nil, maxContextLength: nil, activity: .loaded, timeToLive: nil)
+                                contextLength: nil, maxContextLength: nil, activity: .idle, timeToLive: nil)
         var remote = LoadedModel(runtime: "vllm@box", identifier: "b", displayName: "B", sizeBytes: 0,
                                  quantisation: nil, parameters: nil, architecture: nil, kind: nil,
                                  contextLength: nil, maxContextLength: nil, activity: .loaded, timeToLive: nil)

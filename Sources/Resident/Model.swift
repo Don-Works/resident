@@ -111,7 +111,7 @@ extension Array where Element == LoadedModel {
     var totalBytes: Int { local.reduce(0) { $0 + $1.sizeBytes } }
 
     /// Models holding memory while doing nothing. These are the reclaim candidates.
-    var idleModels: [LoadedModel] { local.filter { $0.activity != .generating } }
+    var idleModels: [LoadedModel] { local.filter { $0.activity == .idle } }
 
     /// Deterministic order: busiest first, then largest, so the menu does not reshuffle
     /// under the pointer while a sample lands.

@@ -91,6 +91,28 @@ final class StatusTitleTests: XCTestCase {
         XCTAssertEqual(render(sample([])).text, "idle")
     }
 
+    func testLoadedUnmanagedModelIsNamedWithoutInventingACompletedPrediction() {
+        var loaded = model("Qwen3.8-Flash-Next", activity: .loaded, size: 70 << 30)
+        loaded.runtime = "unmanaged"
+        loaded.sizeIsApproximate = true
+        let rendering = render(sample([loaded], gpu: 1))
+        XCTAssertEqual(rendering.text, "local · Qwen3.8-Flash-Next · gpu 100%")
+        XCTAssertTrue(rendering.legend.first?.hasPrefix("loaded —") == true)
+        XCTAssertTrue(rendering.legend.contains { $0.contains("model/process memory") })
+        XCTAssertTrue(rendering.legend.contains { $0.contains("no decode rate available") })
+        XCTAssertFalse(rendering.text.contains("tok/s"))
+        let verdict = Verdict.evaluate(sample: sample([loaded], gpu: 1))
+        XCTAssertTrue(verdict.reclaimCandidates.isEmpty)
+        XCTAssertFalse(verdict.warnings.contains { $0.contains("not generating") })
+    }
+
+    func testOnlyConfirmedIdleModelsAreReclaimCandidates() {
+        let idle = model("Idle", activity: .idle, size: 8 << 30)
+        let loaded = model("Unknown activity", activity: .loaded, size: 8 << 30)
+        let generating = model("Generating", size: 8 << 30)
+        XCTAssertEqual([idle, loaded, generating].idleModels, [idle])
+    }
+
     func testNoGlyphsAnywhere() {
         let box = model("qwen3.8-27b", remote: RemoteInfo(name: "vast-box", provider: "vast.ai", host: "box:1",
                                                           gpuUtilisation: 1.0), rate: 70, inFlight: 1)

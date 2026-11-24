@@ -11,7 +11,7 @@ enum CLI {
       resident watch [seconds]      repeat the report until interrupted
       resident models [--json]      list resident models and their decode ceilings
       resident unload <id>          ask the owning runtime to release a model
-      resident unload --idle        release every model that is not generating
+      resident unload --idle        release models the runtime reports as idle
       resident version
 
     --detail waits for the slow per-model activity that only `lms ps` reports. Without

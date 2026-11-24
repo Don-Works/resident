@@ -14,7 +14,8 @@ final class UnmanagedRuntime: ModelRuntime {
     /// Below this a process is a client, a tokeniser or a launcher — not weights.
     private let residentFloor = 900 * 1024 * 1024
 
-    private let signatures = [
+    private static let signatures = [
+        "omlx_elision.server", "cuda_elision.server", "vllm_elision.server",
         "mlx_lm", "mlx-lm", "mlx_vlm", "mlx_parallm",
         "vllm", "sglang", "koboldcpp", "text-generation-launcher",
         "exllama", "tabbyapi",
@@ -56,14 +57,30 @@ final class UnmanagedRuntime: ModelRuntime {
 
     private func candidates() -> [Candidate] {
         ProcessList.all().compactMap { pid in
-            guard let command = ProcessList.command(of: pid) else { return nil }
-            let lowered = command.lowercased()
-            guard let signature = signatures.first(where: { lowered.contains($0) })
-            else { return nil }
+            guard let arguments = ProcessList.arguments(of: pid),
+                  let label = Self.modelName(arguments: arguments) else { return nil }
             guard let resident = ProcessList.residentBytes(of: pid), resident >= residentFloor
             else { return nil }
-            return Candidate(pid: pid, label: "\(signature) (pid \(pid))", resident: resident)
+            return Candidate(pid: pid, label: label, resident: resident)
         }
+    }
+
+    static func modelName(arguments: [String]) -> String? {
+        let command = arguments.joined(separator: " ").lowercased()
+        guard let signature = signatures.first(where: { command.contains($0) }) else { return nil }
+        for flag in ["--model-id", "--model", "--model-path", "--model_path"] {
+            if let index = arguments.firstIndex(of: flag), index + 1 < arguments.count {
+                let value = arguments[index + 1]
+                if !value.isEmpty && !value.hasPrefix("-") {
+                    return URL(fileURLWithPath: value).lastPathComponent
+                }
+            }
+            if let argument = arguments.first(where: { $0.hasPrefix(flag + "=") }) {
+                let value = String(argument.dropFirst(flag.count + 1))
+                if !value.isEmpty { return URL(fileURLWithPath: value).lastPathComponent }
+            }
+        }
+        return signature
     }
 }
 
@@ -73,9 +90,9 @@ enum ProcessList {
         let count = proc_listallpids(nil, 0)
         guard count > 0 else { return [] }
         var pids = [pid_t](repeating: 0, count: Int(count) + 64)
-        let bytes = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        guard bytes > 0 else { return [] }
-        return Array(pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size)).filter { $0 > 0 }
+        let found = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        guard found > 0 else { return [] }
+        return Array(pids.prefix(min(Int(found), pids.count))).filter { $0 > 0 }
     }
 
     static func residentBytes(of pid: pid_t) -> Int? {
@@ -88,19 +105,30 @@ enum ProcessList {
 
     /// The full argument vector, which is where a Python inference server names itself.
     static func command(of pid: pid_t) -> String? {
+        arguments(of: pid)?.joined(separator: " ")
+    }
+
+    static func arguments(of pid: pid_t) -> [String]? {
         var size = Int(argumentMax)
         var buffer = [CChar](repeating: 0, count: size)
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size
         else { return nil }
 
-        // KERN_PROCARGS2 is argc, then the executable path, then NUL-separated argv.
         let bytes = buffer.prefix(size).map { UInt8(bitPattern: $0) }
+        return decodeArguments(bytes)
+    }
+
+    static func decodeArguments(_ bytes: [UInt8]) -> [String]? {
+        guard bytes.count > MemoryLayout<Int32>.size else { return nil }
+        let argc = bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+        guard argc > 0 && argc <= 4096 else { return nil }
         let body = bytes.dropFirst(MemoryLayout<Int32>.size)
-        let parts = body.split(separator: 0, omittingEmptySubsequences: true)
-            .prefix(24)
-            .compactMap { String(bytes: $0, encoding: .utf8) }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+        guard let separator = body.firstIndex(of: 0) else { return nil }
+        let argv = body.suffix(from: body.index(after: separator)).drop(while: { $0 == 0 })
+        let parts = argv.split(separator: 0, omittingEmptySubsequences: false).prefix(Int(argc))
+        guard parts.count == argc else { return nil }
+        return parts.map { String(decoding: $0, as: UTF8.self) }
     }
 
     private static var argumentMax: Int32 = {

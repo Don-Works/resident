@@ -24,7 +24,7 @@ enum StatusTitle {
         }
         parts += fields(for: headline, sample: sample)
         var legend = legend(for: headline, sample: sample, interval: interval)
-        if headline.activity != .generating {
+        if headline.activity != .generating && headline.tokensPerSecond != nil {
             legend.insert("the model with the highest rate on record keeps the title", at: 0)
         }
         return Rendering(text: join(parts), legend: legend)
@@ -77,7 +77,9 @@ enum StatusTitle {
                                interval: TimeInterval) -> [String] {
         var lines: [String] = []
         let seconds = Int(interval)
-        let resident = Format.compactBytes(sample.models.totalBytes) + " of weights resident"
+        let resident = Format.compactBytes(sample.models.totalBytes)
+            + (sample.models.local.contains { $0.sizeIsApproximate }
+                ? " of model/process memory resident" : " of weights resident")
         if let remote = model.remote {
             lines.append("\(remote.name) on \(remote.provider)" + (remote.gpu.map { " (\($0))" } ?? "")
                 + " — the model doing the most right now")
@@ -93,11 +95,13 @@ enum StatusTitle {
                 lines.append("this mac: \(gpu(fraction: sample.gpuUtilisation)), \(resident)")
             }
         } else {
-            lines.append((model.activity == .generating ? "generating now" : "finished just now")
+            lines.append(model.activity.label
                 + " — \(model.displayName) on \(model.runtime), this Mac")
             lines.append(model.tokensPerSecond.map {
                 "\(Format.tokens($0)) — decode rate the runtime reported for its last completed prediction"
-            } ?? "no rate yet — reported when the first prediction completes")
+            } ?? (model.runtime == "unmanaged"
+                ? "no decode rate available from this unmanaged runtime"
+                : "no rate yet — reported when the first prediction completes"))
             lines.append("\(gpu(fraction: sample.gpuUtilisation)) — this Mac's GPU, with \(resident)")
         }
         return lines
